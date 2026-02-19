@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "typedb-client3"
+version = "0.1.0"
+description = "Python client library for TypeDB v3 HTTP API"
+authors = [{name = "Developer", email = "dev@example.com"}]
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "requests>=2.25.0",
+    "cryptography>=3.4.8",
+    "urllib3>=1.26.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=6.0",
+    "pytest-cov>=2.0",
+    "pytest-mock>=3.0",
+    "pytest-asyncio>=0.21.0"
+]
+
+# [project.scripts]
+# typedb-import = "typedb_client3.importer:main"  # Moved to modellm
+
+[tool.setuptools]
+packages = ["typedb_client3"]
+
+[tool.setuptools.package-dir]
+typedb_client3 = "typedb_client3"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+
+# Custom markers
+markers = [
+    "unit: Unit tests that do not require external services",
+    "integration: Integration tests that require live TypeDB server",
+]

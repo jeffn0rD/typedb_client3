@@ -31,7 +31,7 @@ dev = [
 packages = ["typedb_client3"]
 
 [tool.setuptools.package-dir]
-typedb_client3 = "typedb_client3"
+typedb_client3 = "."
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

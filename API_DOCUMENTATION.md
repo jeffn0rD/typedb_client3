@@ -2,16 +2,16 @@
 
 ## Overview
 
-`typedb_client3` is a Python client library for TypeDB v3 that provides a high-level, programmatic interface for interacting with TypeDB databases. The library removes the dependency on writing raw TypeQL (TypeDB Query Language) syntax, making it easier for LLM agents and developers to construct queries correctly.
+`typedb_client3` is a Python client library for TypeDB v3 that provides a high-level, programmatic interface for interacting with TypeDB databases. The library removes the dependency on writing raw TypeQL (TypeDB Query Language) syntax, making it easier for LLM agents and developers to construct queries correctly and consistently against the TypeDB v3 HTTP API.
 
-**Key Features:**
-- TypeDB v3 HTTP API support (fetch, put, links, label, reduce, with)
-- Fluent query builder with reusable templates
-- Transaction support for multi-operation workflows
-- Entity/Relation abstractions with ORM-like functionality
-- JWT authentication with secure token management
-- Connection pooling and optimized session management
-- Database management operations
+All TypeQL examples in this document conform to **TypeDB v3 / TypeQL 3.0** syntax. Key distinctions from v2:
+- Schema uses `entity Foo` / `relation Bar` / `attribute Baz` — **not** `Foo sub entity`
+- Fetch uses `fetch { "key": $var.attr }` — **not** `fetch $a, $b`
+- Role players use `links (role: $var)` — **not** bare tuple syntax in match
+- `put` is the idempotent write keyword (v3 only)
+- `reduce` replaces `aggregate` for grouping/summaries
+
+---
 
 ## Installation
 
@@ -19,10 +19,12 @@
 pip install typedb-client3
 ```
 
+---
+
 ## Quick Start
 
 ```python
-from typedb_client3 import TypeDBClient, TransactionType
+from typedb_client3 import TypeDBClient, TransactionType, QueryBuilder
 
 # Create client with authentication
 client = TypeDBClient(
@@ -31,10 +33,14 @@ client = TypeDBClient(
     password="password"
 )
 
-# Execute a simple query
+# Build and execute a query using the fluent QueryBuilder
+qb = QueryBuilder()
+qb.match().variable("u", "user", {"username": "jdoe"})
+qb.fetch({"username": "$u.username", "full-name": "$u.full-name"})
+
 result = client.execute_query(
     database="mydb",
-    query='match $a isa actor; fetch $a;',
+    query=qb.get_tql(),
     transaction_type=TransactionType.READ
 )
 ```
@@ -43,9 +49,11 @@ result = client.execute_query(
 
 ## Core Classes
 
+---
+
 ### TypeDBClient
 
-The main client class for interacting with TypeDB v3 HTTP API.
+The main client class for interacting with the TypeDB v3 HTTP API.
 
 #### Constructor
 
@@ -60,11 +68,16 @@ TypeDBClient(
 ```
 
 **Parameters:**
-- `base_url`: TypeDB server URL (default: "http://localhost:8000")
-- `username`: Optional username for authentication
-- `password`: Optional password for authentication
-- `timeout`: Default request timeout in seconds (default: 30)
-- `operation_timeouts`: Optional dict of operation-specific timeouts
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `base_url` | str | `"http://localhost:8000"` | TypeDB server URL |
+| `username` | str | None | Username for JWT authentication |
+| `password` | str | None | Password for JWT authentication |
+| `timeout` | int | 30 | Default request timeout in seconds |
+| `operation_timeouts` | dict | None | Per-operation timeout overrides |
+
+**Raises:** `TypeDBValidationError` if any input parameters are invalid.
 
 **Example:**
 ```python
@@ -72,269 +85,256 @@ client = TypeDBClient(
     base_url="http://localhost:8000",
     username="admin",
     password="password",
-    timeout=60
+    timeout=60,
+    operation_timeouts={"schema_operation": 120}
 )
 ```
 
-#### Methods
+---
 
-##### Database Management
+#### Database Management Methods
 
-###### `connect_database(database: str) -> bool`
-Verify database exists and set as current. Creates database if it doesn't exist.
-
-**Parameters:**
-- `database`: Database name
-
-**Returns:** True if database exists or was created
-
-**Example:**
-```python
-client.connect_database("mydb")
-```
-
-###### `list_databases() -> List[str]`
+##### `list_databases() -> List[str]`
 List all databases on the server.
 
-**Returns:** List of database names
-
-**Example:**
 ```python
 databases = client.list_databases()
-print(f"Available databases: {databases}")
+# ["mydb", "testdb"]
 ```
 
-###### `create_database(database: str) -> None`
-Create a new database.
+##### `database_exists(database: str) -> bool`
+Check if a database exists.
 
-**Parameters:**
-- `database`: Database name to create
-
-**Raises:**
-- `TypeDBValidationError`: If database already exists
-- `TypeDBServerError`: If server error occurs
-
-**Example:**
-```python
-client.create_database("mydb")
-```
-
-###### `delete_database(database: str) -> None`
-Delete a database.
-
-**Parameters:**
-- `database`: Database name to delete
-
-**Raises:**
-- `TypeDBValidationError`: If database doesn't exist
-- `TypeDBServerError`: If server error occurs
-
-**Example:**
-```python
-client.delete_database("mydb")
-```
-
-###### `database_exists(database: str) -> bool`
-Check if database exists.
-
-**Parameters:**
-- `database`: Database name
-
-**Returns:** True if database exists
-
-**Example:**
 ```python
 if client.database_exists("mydb"):
     print("Database exists")
 ```
 
-##### Query Execution
+##### `connect_database(database: str) -> bool`
+Verify a database exists; creates it if it does not. Returns `True` on success.
 
-###### `execute_query(database: str, query: str, transaction_type: TransactionType = TransactionType.READ) -> Dict[str, Any]`
-Execute a raw TypeQL query.
-
-**Parameters:**
-- `database`: Database name
-- `query`: TypeQL query string
-- `transaction_type`: READ or WRITE transaction (default: READ)
-
-**Returns:** Query results as JSON
-
-**Example:**
 ```python
-result = client.execute_query(
-    database="mydb",
-    query='match $a isa actor; fetch $a;',
-    transaction_type=TransactionType.READ
-)
+client.connect_database("mydb")
 ```
 
-###### `execute_transaction(database: str, transaction_type: TransactionType, operations: List[Dict[str, Any]]) -> Dict[str, Any]`
-Execute multiple operations in a single transaction.
+##### `create_database(database: str) -> None`
+Create a new database.
 
-**Parameters:**
-- `database`: Database name
-- `transaction_type`: READ or WRITE
-- `operations`: List of operation dictionaries
+**Raises:** `TypeDBValidationError` if the database already exists.
 
-**Returns:** Combined results
-
-**Example:**
 ```python
-operations = [
-    {"query": 'insert $a isa actor, has actor-id "A1";'},
-    {"query": 'insert $a isa actor, has actor-id "A2";'},
-]
-result = client.execute_transaction(
-    "mydb", 
-    TransactionType.WRITE, 
-    operations
-)
+client.create_database("mydb")
 ```
 
-###### `execute_queries(database: str, *queries: str, transaction_type: TransactionType = TransactionType.WRITE) -> List[Dict[str, Any]]`
-Execute multiple queries in a single transaction.
+##### `delete_database(database: str) -> None`
+Delete a database.
 
-**Parameters:**
-- `database`: Database name
-- `*queries`: Variable number of TypeQL queries
-- `transaction_type`: READ or WRITE (default: WRITE)
+**Raises:** `TypeDBValidationError` if the database does not exist.
 
-**Returns:** List of results for each query
-
-**Example:**
 ```python
-results = client.execute_queries(
-    "mydb",
-    'insert $a isa actor, has actor-id "A1";',
-    'insert $a isa actor, has actor-id "A2";',
-    transaction_type=TransactionType.WRITE
-)
+client.delete_database("mydb")
 ```
 
-##### Schema Operations
+---
 
-###### `load_schema(database: str, schema_path) -> None`
-Load TypeDB schema from TQL file or string.
+#### Schema Methods
+
+##### `load_schema(database: str, schema_path) -> None`
+Load a TypeDB v3 schema from a `.tql` file path or a schema string.
 
 **Parameters:**
-- `database`: Database name
-- `schema_path`: Path to .tql schema file (str or Path), or schema string
+- `database`: Target database name
+- `schema_path`: File path (`str` or `Path`) or raw schema string
 
-**Raises:**
-- `FileNotFoundError`: If schema file doesn't exist
-- `TypeDBQueryError`: If schema is invalid
+**Raises:** `FileNotFoundError` if a file path is given but not found. `TypeDBQueryError` if the schema is invalid.
 
-**Example:**
 ```python
 # From file
 client.load_schema("mydb", "schema.tql")
 
-# From string
+# From string — TypeQL v3 syntax
 schema = """
-define actor sub entity, has actor-id, has id-label;
+define
+  entity user, owns username @key, owns full-name, owns age, plays friendship:friend;
+  attribute username, value string;
+  attribute full-name, value string;
+  attribute age, value integer;
+  relation friendship, relates friend @card(0..);
 """
 client.load_schema("mydb", schema)
 ```
 
-###### `get_schema(database: str) -> str`
-Fetch the database schema as TypeQL define string.
+##### `get_schema(database: str) -> str`
+Retrieve the current schema as a TypeQL v3 `define` string.
 
-**Parameters:**
-- `database`: Database name
-
-**Returns:** TypeQL schema string (plain text)
-
-**Example:**
 ```python
 schema = client.get_schema("mydb")
 print(schema)
 ```
 
-##### Data Management
+---
 
-###### `clear_database(database: str) -> None`
-Clear all data from database (keeps schema).
+#### Query Execution Methods
+
+##### `execute_query(database, query, transaction_type) -> Dict[str, Any]`
+Execute a single TypeQL query.
 
 **Parameters:**
 - `database`: Database name
+- `query`: TypeQL query string
+- `transaction_type`: `TransactionType.READ` or `TransactionType.WRITE` (default: READ)
 
-**Example:**
+**Returns:** Query results as a JSON dict.
+
+```python
+# READ example — fetch all users
+result = client.execute_query(
+    database="mydb",
+    query='match $u isa user; fetch { "username": $u.username };',
+    transaction_type=TransactionType.READ
+)
+
+# WRITE example — insert a user
+client.execute_query(
+    database="mydb",
+    query='insert $u isa user, has username "jdoe", has full-name "Jane Doe", has age 30;',
+    transaction_type=TransactionType.WRITE
+)
+```
+
+##### `execute_transaction(database, transaction_type, operations) -> Dict[str, Any]`
+Execute multiple operations in a single atomic transaction.
+
+**Parameters:**
+- `database`: Database name
+- `transaction_type`: `TransactionType.READ` or `TransactionType.WRITE`
+- `operations`: List of `{"query": "..."}` dicts
+
+```python
+operations = [
+    {"query": 'insert $u isa user, has username "jdoe", has full-name "Jane Doe";'},
+    {"query": 'insert $u isa user, has username "asmith", has full-name "Alice Smith";'},
+]
+client.execute_transaction("mydb", TransactionType.WRITE, operations)
+```
+
+##### `execute_queries(database, *queries, transaction_type) -> List[Dict[str, Any]]`
+Execute a variable number of queries in a single transaction.
+
+```python
+client.execute_queries(
+    "mydb",
+    'insert $u isa user, has username "jdoe";',
+    'insert $u isa user, has username "asmith";',
+    transaction_type=TransactionType.WRITE
+)
+```
+
+---
+
+#### Transaction Context
+
+##### `with_transaction(database, transaction_type) -> TransactionContext`
+Create a context manager for grouping multiple operations into one transaction.
+
+```python
+with client.with_transaction("mydb", TransactionType.WRITE) as tx:
+    tx.execute('insert $u isa user, has username "jdoe", has full-name "Jane Doe";')
+    tx.execute('insert $u isa user, has username "asmith", has full-name "Alice Smith";')
+    # All operations committed atomically on context exit
+```
+
+---
+
+#### Data Management Methods
+
+##### `clear_database(database: str) -> None`
+Delete all entity and relation instances from a database while preserving the schema.
+
 ```python
 client.clear_database("mydb")
 ```
 
-###### `wipe_database(database: str, verify: bool = True) -> bool`
-Wipe all data from database safely (delete in dependency order).
+##### `wipe_database(database: str, verify: bool = True) -> bool`
+Safely wipe all data by parsing the schema and deleting instances in dependency order (relations before entities, subtypes before supertypes).
 
 **Parameters:**
-- `database`: Database name to wipe
-- `verify`: Whether to verify the wipe was complete (default: True)
+- `database`: Database name
+- `verify`: If `True`, verifies the wipe was complete (default: `True`)
 
-**Returns:** True if wipe was successful and verified
+**Returns:** `True` if successful.
 
-**Example:**
 ```python
 client.wipe_database("mydb", verify=True)
 ```
 
-##### Transaction Context
+---
 
-###### `with_transaction(database: str, transaction_type: TransactionType) -> TransactionContext`
-Create a transaction context for executing multiple operations.
+#### Utility Methods
 
-**Parameters:**
-- `database`: Database name
-- `transaction_type`: READ or WRITE
+##### `close() -> None`
+Close all connections and clear sensitive data from memory.
 
-**Returns:** TransactionContext manager
-
-**Example:**
-```python
-with client.with_transaction("mydb", TransactionType.WRITE) as tx:
-    tx.execute('insert $a isa actor, has actor-id "A1";')
-    tx.execute('insert $a isa actor, has actor-id "A2";')
-    # All operations committed when exiting context
-```
-
-##### Utility Methods
-
-###### `close() -> None`
-Close all connections and cleanup resources.
-
-**Example:**
 ```python
 client.close()
 ```
 
-###### `get_encrypted_token() -> Optional[str]`
-Get the encrypted token for external storage.
+##### `get_encrypted_token() -> Optional[str]`
+Retrieve the encrypted JWT token for external storage.
 
-**Returns:** Encrypted token string
+##### `set_encrypted_token(encrypted_token: str) -> None`
+Restore a previously encrypted token from external storage.
 
-###### `set_encrypted_token(encrypted_token: str) -> None`
-Set an encrypted token retrieved from external storage.
-
-**Parameters:**
-- `encrypted_token`: Previously encrypted token string
+##### `get_token_access_log() -> List[Dict[str, Any]]`
+Retrieve the token access audit log.
 
 ---
 
 ### TransactionType
 
-Enum for transaction types.
+Enum for specifying transaction mode.
 
 ```python
-class TransactionType(Enum):
-    READ = "read"
-    WRITE = "write"
+from typedb_client3 import TransactionType
+
+TransactionType.READ   # "read"
+TransactionType.WRITE  # "write"
+```
+
+---
+
+### TransactionContext
+
+Context manager returned by `client.with_transaction()`. Collects queries and commits them atomically on exit.
+
+#### Methods
+
+##### `execute(query: str) -> None`
+Add a raw TypeQL query to the transaction.
+
+```python
+with client.with_transaction("mydb", TransactionType.WRITE) as tx:
+    tx.execute('insert $u isa user, has username "jdoe";')
+```
+
+##### `execute_builder(builder: QueryBuilder) -> None`
+Add a query from a `QueryBuilder` instance to the transaction.
+
+**Raises:** `TypeError` if the object does not have a `get_tql()` method.
+
+```python
+qb = QueryBuilder()
+qb.insert().variable("u", "user", {"username": "jdoe", "full-name": "Jane Doe"})
+
+with client.with_transaction("mydb", TransactionType.WRITE) as tx:
+    tx.execute_builder(qb)
 ```
 
 ---
 
 ### QueryBuilder
 
-Fluent API for building TypeQL v3 queries without raw syntax.
+Fluent API for constructing TypeQL v3 queries programmatically without writing raw syntax. Queries are built by chaining method calls and finalized with `build()` or `get_tql()`.
 
 #### Constructor
 
@@ -342,308 +342,237 @@ Fluent API for building TypeQL v3 queries without raw syntax.
 QueryBuilder(mode: Optional[str] = None)
 ```
 
+---
+
 #### Query Mode Methods
 
-###### `match() -> QueryBuilder`
-Start a MATCH query.
+All mode methods return `self` for chaining.
 
-**Returns:** Self for method chaining
+| Method | TypeQL Keyword | Description |
+|---|---|---|
+| `match()` | `match` | Start a match/filter stage |
+| `insert()` | `insert` | Start an insert stage |
+| `put()` | `put` | Idempotent write (checks existence first) |
+| `delete()` | `delete` | Start a delete stage |
+| `update()` | `update` | Modify data with cardinality ≤ 1 |
+| `define()` | `define` | Schema definition |
+| `undefine()` | `undefine` | Schema removal |
+| `redefine()` | `redefine` | Schema modification |
 
-**Example:**
+---
+
+#### Class Methods (Templates)
+
+Convenience constructors for creating reusable query templates.
+
 ```python
-query = QueryBuilder().match().variable("x", "actor")
+template = QueryBuilder.match_template()
+template = QueryBuilder.insert_template()
+template = QueryBuilder.put_template()
+template = QueryBuilder.delete_template()
 ```
 
-###### `insert() -> QueryBuilder`
-Start an INSERT query.
-
-**Returns:** Self for method chaining
-
-###### `put() -> QueryBuilder`
-Start a PUT query (TypeDB v3: idempotent write).
-
-**Returns:** Self for method chaining
-
-**Example:**
-```python
-query = QueryBuilder().put().variable("x", "actor", {"actor-id": "A1"})
-```
-
-###### `delete() -> QueryBuilder`
-Start a DELETE query.
-
-**Returns:** Self for method chaining
-
-###### `update() -> QueryBuilder`
-Start an UPDATE query (TypeDB v3: modify existing data).
-
-**Returns:** Self for method chaining
-
-###### `define() -> QueryBuilder`
-Start a DEFINE query (schema definition).
-
-**Returns:** Self for method chaining
-
-###### `undefine() -> QueryBuilder`
-Start a UNDEFINE query (schema removal).
-
-**Returns:** Self for method chaining
-
-###### `redefine() -> QueryBuilder`
-Start a REDEFINE query (schema modification).
-
-**Returns:** Self for method chaining
+---
 
 #### Variable Definition
 
-###### `variable(name: str, type_name: Optional[str] = None, attributes: Optional[Dict[str, Any]] = None) -> QueryBuilder`
-Define a variable in the query.
+##### `variable(name, type_name=None, attributes=None) -> QueryBuilder`
+Define a typed variable with optional attribute constraints.
 
 **Parameters:**
-- `name`: Variable name (without $)
-- `type_name`: Optional TypeDB type
-- `attributes`: Optional attribute constraints
+- `name`: Variable name without `$` prefix
+- `type_name`: TypeDB type (e.g., `"user"`)
+- `attributes`: Dict of `{attribute-name: value}` constraints
 
-**Returns:** Self for method chaining
-
-**Example:**
 ```python
-query = QueryBuilder()
-    .match()
-    .variable("x", "actor", {"actor-id": "A1"})
+qb = QueryBuilder()
+qb.match()
+qb.variable("u", "user", {"username": "jdoe"})
+# Produces: match $u isa user, has username "jdoe";
 ```
 
-#### Relations
+---
 
-###### `relation(relation_type: str) -> RelationBuilder`
-Start defining a relation.
+#### Relation Definition
 
-**Parameters:**
-- `relation_type`: TypeDB relation type name
+##### `relation(relation_type: str) -> RelationBuilder`
+Start building a relation pattern. Returns a `RelationBuilder` for chaining roles.
 
-**Returns:** RelationBuilder for chaining
-
-**Example:**
 ```python
-query = QueryBuilder()
-    .insert()
-    .relation("messaging")
-        .role("producer", "$p")
-        .role("consumer", "$c")
-        .role("message", "$m")
+qb = QueryBuilder()
+qb.match()
+qb.variable("u", "user", {"username": "jdoe"})
+qb.variable("v", "user")
+qb.relation("friendship") \
+    .role("friend", "$u") \
+    .role("friend", "$v") \
+    .links() \
     .end_relation()
+# Produces: match $u isa user, has username "jdoe"; $v isa user;
+#           $r isa friendship, links (friend: $u, friend: $v);
 ```
 
-#### Query Clauses
+---
 
-###### `fetch(variables: Union[List[str], Dict[str, Any]]) -> QueryBuilder`
-Add FETCH clause (TypeDB v3 syntax).
+#### Fetch Clause
+
+##### `fetch(variables: Union[List[str], Dict[str, Any]]) -> QueryBuilder`
+Add a `fetch` terminal stage for JSON serialization (TypeQL v3).
 
 **Parameters:**
-- `variables`: List of variable names or dict for nested fetch
+- `variables`: A list of variable names (fetches all attributes with `$var.*`) or a dict for structured output
 
-**Returns:** Self for method chaining
-
-**Example:**
 ```python
-# Simple fetch
-query.fetch(["message", "aggregate"])
+# Fetch all attributes of $u
+qb.fetch(["u"])
+# Produces: fetch { "u": {$u.*} }
 
-# Nested fetch
-query.fetch({
-    "name": "$p.name",
-    "titles": {
-        "match": [...],
-        "fetch": [...]
-    }
+# Structured fetch — TypeQL v3 style
+qb.fetch({
+    "username": "$u.username",
+    "full-name": "$u.full-name"
 })
+# Produces: fetch { "username": $u.username, "full-name": $u.full-name }
 ```
 
-###### `order_by(variable: str, attribute: str) -> QueryBuilder`
-Add ORDER BY clause.
+---
+
+#### Aggregation
+
+##### `reduce(variable, aggregation, groupby=None) -> QueryBuilder`
+Add a `reduce` stage for aggregation.
 
 **Parameters:**
-- `variable`: Variable name
-- `attribute`: Attribute to order by
+- `variable`: Variable to aggregate (e.g., `"$age"`)
+- `aggregation`: Function name: `"sum"`, `"count"`, `"mean"`, etc.
+- `groupby`: Optional variable name to group by
 
-**Returns:** Self for method chaining
-
-**Example:**
 ```python
-query.order_by("x", "actor-id")
+qb = QueryBuilder()
+qb.match().variable("u", "user")
+qb.reduce("$age", "mean")
+# Produces: match $u isa user; reduce mean($age);
+
+# With groupby
+qb.reduce("$s", "sum", "$dept")
+# Produces: reduce sum($s) groupby $dept;
 ```
 
-###### `offset(count: int) -> QueryBuilder`
-Add OFFSET clause.
+---
 
-**Parameters:**
-- `count`: Number of rows to skip
+#### Pagination
 
-**Returns:** Self for method chaining
+##### `order_by(variable, attribute) -> QueryBuilder`
+Sort results by an attribute.
 
-**Example:**
 ```python
-query.offset(10)
+qb.order_by("u", "username")
+# Produces: sort $u has username asc;
 ```
 
-###### `limit(count: int) -> QueryBuilder`
-Add LIMIT clause.
+##### `offset(count: int) -> QueryBuilder`
+Skip the first `n` results.
 
-**Parameters:**
-- `count`: Maximum number of rows to return
-
-**Returns:** Self for method chaining
-
-**Example:**
 ```python
-query.limit(100)
+qb.offset(20)
 ```
 
-###### `reduce(variable: str, aggregation: str, groupby: Optional[str] = None) -> QueryBuilder`
-Add REDUCE clause for aggregation.
+##### `limit(count: int) -> QueryBuilder`
+Limit results to `n` rows.
 
-**Parameters:**
-- `variable`: Variable to aggregate (e.g., "$s")
-- `aggregation`: Aggregation function (e.g., "sum", "count", "mean")
-- `groupby`: Optional variable to group by
-
-**Returns:** Self for method chaining
-
-**Example:**
 ```python
-query.reduce("$s", "sum", "$f")  # sum($s) groupby $f
+qb.limit(10)
 ```
 
-###### `with_function(fun_def: str) -> QueryBuilder`
-Add WITH clause for ad-hoc function definition.
+---
 
-**Parameters:**
-- `fun_def`: Function definition string
+#### Ad-hoc Functions
 
-**Returns:** Self for method chaining
+##### `with_function(fun_def: str) -> QueryBuilder`
+Add a `with` preamble for query-level function definitions (TypeQL v3).
 
-**Example:**
 ```python
-query.with_function('fun path($start: node) -> { node }: ...')
+qb.with_function(
+    "fun path($start: node) -> { node }: "
+    "match { ($start, $target) isa edge; } "
+    "or { let $via in path($start); ($via, $target) isa edge; }; "
+    "return { $target };"
+)
 ```
 
-#### Building and Execution
+---
 
-###### `build() -> str`
-Build and return the complete TypeQL query string.
+#### Building Queries
 
-**Returns:** Valid TypeDB v3 TypeQL query string
+##### `build() -> str`
+Build and return the complete TypeQL v3 query string.
 
-**Example:**
+**Raises:** `ValueError` if no mode has been set.
+
 ```python
-query_str = query.build()
+qb = QueryBuilder()
+qb.match().variable("u", "user", {"username": "jdoe"})
+qb.fetch({"username": "$u.username"})
+print(qb.build())
+# match $u isa user, has username "jdoe"; fetch { "username": $u.username };
 ```
 
-###### `get_tql() -> str`
-Get the TypeQL string from the query instance.
+##### `get_tql() -> str`
+Return the TypeQL string, using a cached result if the query has not changed.
 
-**Returns:** TypeQL query string (may be cached)
-
-**Example:**
 ```python
-tql = query.get_tql()
+tql = qb.get_tql()
 ```
 
-#### Query Templates
+---
 
-###### `match_template() -> QueryBuilder` (classmethod)
-Create a reusable MATCH query template.
+#### Template & Reuse Methods
 
-**Returns:** New QueryBuilder instance
+##### `update_variable(name, type_name=None, attributes=None) -> Variable`
+Update an existing variable's type or attributes. Clears the query cache so `get_tql()` rebuilds.
 
-**Example:**
 ```python
-template = QueryBuilder.match_template()
-template.variable("x", "actor")
+# Build a reusable insert template
+tmpl = QueryBuilder.insert_template()
+tmpl.variable("u", "user")
+
+# First insert
+tmpl.update_variable("u", "user", {"username": "jdoe", "full-name": "Jane Doe"})
+client.execute_query("mydb", tmpl.get_tql(), TransactionType.WRITE)
+
+# Reuse for second insert
+tmpl.update_variable("u", "user", {"username": "asmith", "full-name": "Alice Smith"})
+client.execute_query("mydb", tmpl.get_tql(), TransactionType.WRITE)
 ```
 
-###### `insert_template() -> QueryBuilder` (classmethod)
-Create a reusable INSERT query template.
+##### `clone() -> QueryBuilder`
+Create a deep copy of this builder for independent modification.
 
-**Returns:** New QueryBuilder instance
-
-###### `put_template() -> QueryBuilder` (classmethod)
-Create a reusable PUT query template.
-
-**Returns:** New QueryBuilder instance
-
-###### `delete_template() -> QueryBuilder` (classmethod)
-Create a reusable DELETE query template.
-
-**Returns:** New QueryBuilder instance
-
-#### Variable Update Methods
-
-###### `update_variable(name: str, type_name: Optional[str] = None, attributes: Optional[Dict[str, Any]] = None) -> Variable`
-Update an existing variable's type or attributes.
-
-**Parameters:**
-- `name`: Variable name (without $)
-- `type_name`: New TypeDB type (or None to keep existing)
-- `attributes`: New attributes (or None to keep existing)
-
-**Returns:** Updated Variable object
-
-**Example:**
 ```python
-# Create reusable insert template
-insert_query = QueryBuilder.insert_template()
+base = QueryBuilder.match_template()
+base.variable("u", "user")
 
-# Use for first entity
-insert_query.update_variable("a", "actor", {"actor-id": "A1"})
-tql1 = insert_query.get_tql()
+q1 = base.clone()
+q1.update_variable("u", "user", {"username": "jdoe"})
 
-# Update for second entity
-insert_query.update_variable("a", "actor", {"actor-id": "A2"})
-tql2 = insert_query.get_tql()
+q2 = base.clone()
+q2.update_variable("u", "user", {"username": "asmith"})
 ```
 
-###### `clear_variable(name: str) -> None`
-Remove a variable from the query.
+##### `clear_variable(name: str) -> None`
+Remove a single variable from the query.
 
-**Parameters:**
-- `name`: Variable name (without $)
-
-###### `clear_all_variables() -> None`
+##### `clear_all_variables() -> None`
 Remove all variables from the query.
 
-###### `get_variable(name: str) -> Optional[Variable]`
-Get a variable by name.
-
-**Parameters:**
-- `name`: Variable name (without $)
-
-**Returns:** Variable object or None
-
-###### `clone() -> QueryBuilder`
-Create a deep copy of this query builder for reuse.
-
-**Returns:** New QueryBuilder instance with same configuration
-
-**Example:**
-```python
-# Create base template
-base_query = QueryBuilder.match_template()
-base_query.variable("x", "actor")
-
-# Clone for different executions
-query1 = base_query.clone()
-query1.update_variable("x", "actor", {"actor-id": "A1"})
-
-query2 = base_query.clone()
-query2.update_variable("x", "actor", {"actor-id": "A2"})
-```
+##### `get_variable(name: str) -> Optional[Variable]`
+Retrieve a `Variable` object by name for direct manipulation.
 
 ---
 
 ### Variable
 
-Represents a TypeQL v3 variable with type and constraints.
+Represents a single TypeQL v3 variable with type and attribute constraints.
 
 #### Constructor
 
@@ -653,409 +582,273 @@ Variable(name: str)
 
 #### Methods
 
-###### `isa(type_name: str) -> Variable`
-Set the TypeDB type of this variable.
+All methods return `self` for chaining.
 
-**Parameters:**
-- `type_name`: Entity or relation type name
+##### `isa(type_name: str) -> Variable`
+Set the TypeDB type constraint.
 
-**Returns:** Self for method chaining
-
-**Example:**
 ```python
-var = Variable("x").isa("actor")
+var = Variable("u").isa("user")
+# $u isa user
 ```
 
-###### `has(attribute: str, value: Any) -> Variable`
-Add an attribute constraint.
+##### `has(attribute: str, value: Any) -> Variable`
+Add an attribute ownership constraint.
 
-**Parameters:**
-- `attribute`: Attribute name
-- `value`: Attribute value (will be properly escaped)
-
-**Returns:** Self for method chaining
-
-**Example:**
 ```python
-var = Variable("x").isa("actor").has("actor-id", "A1")
+var = Variable("u").isa("user").has("username", "jdoe").has("age", 30)
+# $u isa user, has username "jdoe", has age 30
 ```
 
-###### `label(type_label: str) -> Variable`
-Add a label constraint (TypeDB v3: label keyword).
+##### `label(type_label: str) -> Variable`
+Add a `label` constraint for polymorphic type queries (TypeQL v3).
 
-**Parameters:**
-- `type_label`: Type label string
-
-**Returns:** Self for method chaining
-
-**Example:**
 ```python
-var = Variable("x").label("my-label")
+var = Variable("t").label("user")
+# $t label user
 ```
 
 ---
 
 ### RelationBuilder
 
-Builder for relations in queries.
+Builder for relation patterns within a `QueryBuilder`. Obtained via `QueryBuilder.relation()`.
 
 #### Methods
 
-###### `role(role_name: str, variable: str) -> RelationBuilder`
-Add a role to the relation.
+##### `role(role_name: str, variable: str) -> RelationBuilder`
+Add a role player to the relation.
 
-**Parameters:**
-- `role_name`: Role name (e.g., "producer", "consumer")
-- `variable`: Variable name (e.g., "$actor")
-
-**Returns:** Self for method chaining
-
-**Example:**
 ```python
-builder.role("producer", "$p")
+builder.role("friend", "$u").role("friend", "$v")
 ```
 
-###### `links() -> RelationBuilder`
-Use TypeDB v3 links keyword for role players.
+##### `links() -> RelationBuilder`
+Use the TypeQL v3 `links` keyword for role player patterns.
 
-**Returns:** Self for method chaining
-
-**Example:**
 ```python
 builder.links()
+# Produces: $r isa friendship, links (friend: $u, friend: $v);
 ```
 
-###### `as_variable(var_name: str) -> RelationBuilder`
-Assign this relation to a variable name.
+##### `as_variable(var_name: str) -> RelationBuilder`
+Assign the relation to a named variable.
 
-**Parameters:**
-- `var_name`: Variable name (without $)
-
-**Returns:** Self for method chaining
-
-**Example:**
 ```python
-builder.as_variable("r")
+builder.as_variable("f")
+# Produces: $f isa friendship, links (...)
 ```
 
-###### `end_relation() -> QueryBuilder`
-Finish defining relation and return to QueryBuilder.
+##### `end_relation() -> QueryBuilder`
+Finalize the relation and return to the parent `QueryBuilder`.
 
-**Returns:** QueryBuilder for chaining
+---
 
-**Example:**
+## Entity and Relation Base Classes
+
+`typedb_client3` provides `Entity` and `Relation` base classes that you subclass to model your own TypeDB v3 schema. These dataclasses automatically generate TypeQL v3 queries from Python objects, eliminating the need to write raw query strings for CRUD operations.
+
+### Entity Base Class
+
+Subclass `Entity` to define a TypeDB entity type. Set `_type` to the TypeDB type name and `_key_attr` to the primary key attribute (in kebab-case). Fields use `snake_case` and are automatically converted to `kebab-case` for TypeDB.
+
 ```python
-query = QueryBuilder()
-    .relation("messaging")
-        .role("producer", "$p")
-        .role("consumer", "$c")
-        .role("message", "$m")
-    .end_relation()
+from dataclasses import dataclass
+from typing import Optional
+from typedb_client3 import Entity
+
+@dataclass
+class Person(Entity):
+    _type = "person"
+    _key_attr = "username"
+
+    username: str
+    full_name: str           # maps to TypeDB attribute: full-name
+    age: int
+    email: Optional[str] = None
+```
+
+#### Generating Queries from Entity Instances
+
+```python
+person = Person(username="jdoe", full_name="Jane Doe", age=30, email="jdoe@example.com")
+
+# INSERT query
+insert_q = person.to_insert_query()
+# insert $p isa person, has username "jdoe", has full-name "Jane Doe", has age 30, has email "jdoe@example.com";
+
+# MATCH query (by key attribute)
+match_q = person.to_match_query()
+# match $p isa person, has username "jdoe";
+
+# Parameterized INSERT (injection-safe)
+query, params = person.to_parameterized_insert_query()
+
+# Parameterized MATCH (injection-safe)
+query, params = person.to_parameterized_match_query()
+```
+
+#### Executing Entity Queries
+
+```python
+from typedb_client3 import TypeDBClient, TransactionType
+
+client = TypeDBClient(base_url="http://localhost:8000", username="admin", password="password")
+
+person = Person(username="jdoe", full_name="Jane Doe", age=30)
+
+# Insert
+client.execute_query("mydb", person.to_insert_query(), TransactionType.WRITE)
+
+# Match
+result = client.execute_query("mydb", person.to_match_query(), TransactionType.READ)
 ```
 
 ---
 
-### Entity and Relation Classes
+### Relation Base Class
 
-#### Entity
+Subclass `Relation` to define a TypeDB relation type. Set `_type` to the relation type name and `_roles` to the list of role names.
 
-Base class for TypeDB entities with schema metadata.
-
-##### Attributes
-- `_type`: ClassVar[str] - TypeDB entity type name
-- `_key_attr`: ClassVar[Optional[str]] - Primary key attribute
-
-##### Methods
-
-###### `get_key_value() -> Any`
-Get the value of the key attribute.
-
-**Returns:** Key attribute value
-
-###### `to_insert_query() -> str`
-Generate INSERT query for this entity.
-
-**Returns:** TypeQL INSERT query string
-
-**Example:**
 ```python
-actor = Actor(
-    actor_id="A1",
-    id_label="User1",
-    description="Test actor",
-    justification="Testing"
-)
-query = actor.to_insert_query()
+from dataclasses import dataclass
+from typedb_client3 import Relation, Entity
+
+@dataclass
+class Friendship(Relation):
+    _type = "friendship"
+    _roles = ["friend"]
+
+    friend1: Person
+    friend2: Person
+
+@dataclass
+class Employment(Relation):
+    _type = "employment"
+    _roles = ["employer", "employee"]
+
+    employer: "Company"
+    employee: Person
 ```
 
-###### `to_match_query() -> str`
-Generate MATCH query to find this entity by key.
+#### Generating Relation Queries
 
-**Returns:** TypeQL MATCH query string
-
-**Example:**
 ```python
-query = actor.to_match_query()
+p1 = Person(username="jdoe", full_name="Jane Doe", age=30)
+p2 = Person(username="asmith", full_name="Alice Smith", age=25)
+
+friendship = Friendship(friend1=p1, friend2=p2)
+
+# Generate INSERT query — pass role-name to variable-name mapping
+insert_q = friendship.to_insert_query({"friend": "p1"})
+# (friend: $p1) isa friendship;
 ```
 
-###### `to_parameterized_insert_query() -> Tuple[str, Dict[str, Any]]`
-Generate parameterized INSERT query (secure against injection).
+#### Full Relation Insert Workflow
 
-**Returns:** Tuple of (query_string, parameters_dict)
-
-**Example:**
 ```python
-query, params = actor.to_parameterized_insert_query()
+# 1. Insert both entities first
+client.execute_query("mydb", p1.to_insert_query(), TransactionType.WRITE)
+client.execute_query("mydb", p2.to_insert_query(), TransactionType.WRITE)
+
+# 2. Insert the relation using a match+insert pipeline
+relation_query = """
+match
+  $p1 isa person, has username "jdoe";
+  $p2 isa person, has username "asmith";
+insert
+  (friend: $p1, friend: $p2) isa friendship;
+"""
+client.execute_query("mydb", relation_query, TransactionType.WRITE)
 ```
 
-###### `to_parameterized_match_query() -> Tuple[str, Dict[str, Any]]`
-Generate parameterized MATCH query (secure against injection).
-
-**Returns:** Tuple of (query_string, parameters_dict)
-
-#### Predefined Entity Classes
-
-##### Actor
-Actor entity representing a system component.
-
-**Fields:**
-- `actor_id`: str (key)
-- `id_label`: str
-- `description`: str
-- `justification`: str
-
-**TypeDB Type:** `actor`
-
-##### Action
-Action entity representing a system action.
-
-**Fields:**
-- `action_id`: str (key)
-- `id_label`: str
-- `description`: str
-- `justification`: str
-
-**TypeDB Type:** `action`
-
-##### Message
-Message entity for inter-actor communication.
-
-**Fields:**
-- `message_id`: str (key)
-- `id_label`: str
-- `description`: str
-- `justification`: str
-
-**TypeDB Type:** `message`
-
-##### DataEntity
-DataEntity entity for domain data.
-
-**Fields:**
-- `data_entity_id`: str (key)
-- `id_label`: str
-- `description`: str
-- `justification`: str
-
-**TypeDB Type:** `data-entity`
-
-##### Requirement
-Requirement entity for functional/non-functional requirements.
-
-**Fields:**
-- `requirement_id`: str (key)
-- `requirement_type`: str
-- `status`: str
-- `priority`: str
-- `id_label`: str
-- `description`: str
-- `justification`: str
-
-**TypeDB Type:** `requirement`
-
-##### ActionAggregate
-ActionAggregate entity grouping actions.
-
-**Fields:**
-- `action_agg_id`: str (key)
-- `id_label`: str
-- `description`: str
-- `justification`: str
-
-**TypeDB Type:** `action-aggregate`
-
-##### MessageAggregate
-MessageAggregate entity grouping messages.
-
-**Fields:**
-- `message_agg_id`: str (key)
-- `id_label`: str
-- `description`: str
-- `justification`: str
-
-**TypeDB Type:** `message-aggregate`
-
-##### Constraint
-Constraint entity for message constraints.
-
-**Fields:**
-- `constraint_id`: str (key)
-- `id_label`: str
-- `description`: str
-
-**TypeDB Type:** `constraint`
-
-##### Category
-Category entity for categorization.
-
-**Fields:**
-- `name`: str (key)
-
-**TypeDB Type:** `category`
-
-##### TextBlock
-TextBlock entity for anchored text.
-
-**Fields:**
-- `anchor_id`: str (key)
-- `id_label`: str
-- `anchor_type`: str
-- `text`: str
-- `order`: int
-
-**TypeDB Type:** `text-block`
-
-##### Concept
-Concept entity for candidate concepts.
-
-**Fields:**
-- `concept_id`: str (key)
-- `id_label`: str
-- `description`: str
-
-**TypeDB Type:** `concept`
-
-##### SpecDocument
-SpecDocument entity for specification documents.
-
-**Fields:**
-- `spec_doc_id`: str (key)
-- `title`: str
-- `version`: str
-- `description`: str
-
-**TypeDB Type:** `spec-document`
-
-##### SpecSection
-SpecSection entity for specification sections.
-
-**Fields:**
-- `spec_section_id`: str (key)
-- `title`: str
-- `id_label`: str
-- `order`: int
-
-**TypeDB Type:** `spec-section`
-
-#### Predefined Relation Classes
-
-##### Messaging
-Messaging relation between Actors and Message.
-
-**Fields:**
-- `producer`: Actor
-- `consumer`: Actor
-- `message`: Message
-
-**TypeDB Type:** `messaging`
-
-##### Anchoring
-Anchoring relation between TextBlock and domain entities.
-
-**Fields:**
-- `anchor`: TextBlock
-- `concept`: Entity
-
-**TypeDB Type:** `anchoring`
-
-##### Membership
-Membership relation for grouping.
-
-**Fields:**
-- `member_of`: Entity
-- `member`: Entity
-
-**TypeDB Type:** `membership`
-
-##### MembershipSeq
-Ordered membership relation.
-
-**Fields:**
-- `member_of`: Entity
-- `member`: Entity
-- `order`: int
-
-**TypeDB Type:** `membership-seq`
-
-##### Outlining
-Outlining relation for hierarchical structure.
-
-**Fields:**
-- `section`: Entity
-- `subsection`: Entity
-
-**TypeDB Type:** `outlining`
-
-##### Categorization
-Categorization relation.
-
-**Fields:**
-- `category`: Category
-- `object`: Entity
-
-**TypeDB Type:** `categorization`
-
-##### Requiring
-Requiring relation between Requirements and Concepts/Messages.
-
-**Fields:**
-- `required_by`: Requirement
-- `conceptualized_as`: Entity
-
-**TypeDB Type:** `requiring`
-
-##### ConstrainedBy
-ConstrainedBy relation.
-
-**Fields:**
-- `constraint`: Constraint
-- `object`: Entity
-
-**TypeDB Type:** `constrained-by`
-
-##### MessagePayload
-MessagePayload relation between Message and DataEntity.
-
-**Fields:**
-- `message`: Message
-- `payload`: DataEntity
-
-**TypeDB Type:** `message-payload`
-
-##### Filesystem
-Filesystem relation for folder/file structure.
-
-**Fields:**
-- `folder`: Entity
-- `entry`: Entity
-
-**TypeDB Type:** `filesystem`
+---
+
+### Defining a Complete Schema with Entity and Relation Classes
+
+The following example shows how to model a domain schema using the base classes and load it into TypeDB v3.
+
+```python
+from dataclasses import dataclass
+from typing import Optional
+from typedb_client3 import Entity, Relation, TypeDBClient, TransactionType
+
+# --- Entity Definitions ---
+
+@dataclass
+class Company(Entity):
+    _type = "company"
+    _key_attr = "company-id"
+
+    company_id: str
+    name: str
+    industry: Optional[str] = None
+
+@dataclass
+class Employee(Entity):
+    _type = "employee"
+    _key_attr = "employee-id"
+
+    employee_id: str
+    full_name: str
+    role: str
+
+# --- Relation Definitions ---
+
+@dataclass
+class Employment(Relation):
+    _type = "employment"
+    _roles = ["employer", "employee"]
+
+    employer: Company
+    employee: Employee
+
+# --- Schema (TypeQL v3) ---
+
+SCHEMA = """
+define
+  entity company, owns company-id @key, owns name, owns industry,
+    plays employment:employer;
+  entity employee, owns employee-id @key, owns full-name, owns role,
+    plays employment:employee;
+  attribute company-id, value string;
+  attribute name, value string;
+  attribute industry, value string;
+  attribute employee-id, value string;
+  attribute full-name, value string;
+  attribute role, value string;
+  relation employment, relates employer, relates employee;
+"""
+
+# --- Usage ---
+
+client = TypeDBClient(base_url="http://localhost:8000", username="admin", password="password")
+client.create_database("hr")
+client.load_schema("hr", SCHEMA)
+
+# Insert entities
+acme = Company(company_id="C001", name="Acme Corp", industry="Technology")
+emp  = Employee(employee_id="E001", full_name="Jane Doe", role="Engineer")
+
+client.execute_query("hr", acme.to_insert_query(), TransactionType.WRITE)
+client.execute_query("hr", emp.to_insert_query(), TransactionType.WRITE)
+
+# Insert relation
+relation_query = """
+match
+  $c isa company, has company-id "C001";
+  $e isa employee, has employee-id "E001";
+insert
+  (employer: $c, employee: $e) isa employment;
+"""
+client.execute_query("hr", relation_query, TransactionType.WRITE)
+```
 
 ---
 
 ### EntityManager
 
-High-level API for entity operations using the TypeDB client.
+High-level CRUD manager that wraps `TypeDBClient` and `QueryBuilder` for common entity operations.
 
 #### Constructor
 
@@ -1063,160 +856,57 @@ High-level API for entity operations using the TypeDB client.
 EntityManager(client: TypeDBClient, database: str)
 ```
 
-**Parameters:**
-- `client`: TypeDBClient instance
-- `database`: Database name
+```python
+from typedb_client3 import EntityManager
+
+manager = EntityManager(client, "mydb")
+```
 
 #### Methods
 
 ##### `insert(entity: Entity) -> None`
-Insert an entity.
+Insert an entity. Raises `TypeDBQueryError` if the entity already exists.
 
-**Parameters:**
-- `entity`: Entity instance to insert
-
-**Raises:**
-- `TypeDBQueryError`: If entity already exists
-
-**Example:**
 ```python
-manager = EntityManager(client, "mydb")
-actor = Actor(
-    actor_id="A1",
-    id_label="User1",
-    description="Test actor",
-    justification="Testing"
-)
-manager.insert(actor)
+person = Person(username="jdoe", full_name="Jane Doe", age=30)
+manager.insert(person)
 ```
 
 ##### `put(entity: Entity) -> None`
-Put an entity (idempotent - checks existence first).
+Idempotent insert — uses TypeQL v3 `put` to check existence before inserting.
 
-**Parameters:**
-- `entity`: Entity instance to put
-
-**Example:**
 ```python
-manager.put(actor)
+manager.put(person)
 ```
 
-##### `fetch_one(entity_type: Type[T], filters: Dict[str, Any]) -> Optional[T]`
-Fetch a single entity by filters.
+##### `fetch_one(entity_type, filters) -> Optional[T]`
+Fetch a single entity matching the given attribute filters.
 
-**Parameters:**
-- `entity_type`: Entity class to fetch
-- `filters`: Attribute constraints
-
-**Returns:** Entity instance or None if not found
-
-**Example:**
 ```python
-actor = manager.fetch_one(Actor, {"actor-id": "A1"})
+person = manager.fetch_one(Person, {"username": "jdoe"})
 ```
 
-##### `fetch_all(entity_type: Type[T], filters: Optional[Dict[str, Any]] = None) -> List[T]`
-Fetch all entities matching filters.
+##### `fetch_all(entity_type, filters=None) -> List[T]`
+Fetch all entities of a type, with optional attribute filters.
 
-**Parameters:**
-- `entity_type`: Entity class to fetch
-- `filters`: Optional attribute constraints
-
-**Returns:** List of entity instances
-
-**Example:**
 ```python
-actors = manager.fetch_all(Actor)
+all_persons = manager.fetch_all(Person)
+engineers   = manager.fetch_all(Employee, {"role": "Engineer"})
 ```
 
-##### `exists(entity_type: Type[T], key_value: Any) -> bool`
-Check if entity exists by key.
+##### `exists(entity_type, key_value) -> bool`
+Check if an entity with the given key value exists.
 
-**Parameters:**
-- `entity_type`: Entity class
-- `key_value`: Key attribute value
-
-**Returns:** True if entity exists
-
-**Example:**
 ```python
-if manager.exists(Actor, "A1"):
-    print("Actor exists")
+if manager.exists(Person, "jdoe"):
+    print("Person exists")
 ```
 
 ##### `delete(entity: Entity) -> None`
-Delete an entity.
-
-**Parameters:**
-- `entity`: Entity instance to delete
-
-**Example:**
-```python
-manager.delete(actor)
-```
-
-##### `insert_relation(relation: Relation) -> None`
-Insert a relation.
-
-**Parameters:**
-- `relation`: Relation instance
-
-**Example:**
-```python
-messaging = Messaging(
-    producer=actor1,
-    consumer=actor2,
-    message=msg
-)
-manager.insert_relation(messaging)
-```
-
----
-
-### TransactionContext
-
-Context manager for executing multiple operations in a single transaction.
-
-#### Constructor
+Delete an entity by matching on its key attribute.
 
 ```python
-TransactionContext(client: TypeDBClient, database: str, transaction_type: TransactionType)
-```
-
-**Parameters:**
-- `client`: TypeDBClient instance
-- `database`: Database name
-- `transaction_type`: READ or WRITE transaction
-
-#### Methods
-
-##### `execute(query: str) -> None`
-Add a query to the transaction.
-
-**Parameters:**
-- `query`: TypeQL query string
-
-**Example:**
-```python
-with client.with_transaction("mydb", TransactionType.WRITE) as tx:
-    tx.execute('insert $a isa actor, has actor-id "A1";')
-    tx.execute('insert $a isa actor, has actor-id "A2";')
-```
-
-##### `execute_builder(builder: Any) -> None`
-Add a query from a QueryBuilder to the transaction.
-
-**Parameters:**
-- `builder`: QueryBuilder or any object with get_tql() method
-
-**Raises:**
-- `TypeError`: If builder doesn't have get_tql() method
-
-**Example:**
-```python
-query = QueryBuilder().insert().variable("a", "actor", {"actor-id": "A1"})
-with client.with_transaction("mydb", TransactionType.WRITE) as tx:
-    tx.execute_builder(query)
+manager.delete(person)
 ```
 
 ---
@@ -1225,201 +915,201 @@ with client.with_transaction("mydb", TransactionType.WRITE) as tx:
 
 All exceptions inherit from `TypeDBError`.
 
-### TypeDBConnectionError
-Connection-related errors.
+| Exception | Description |
+|---|---|
+| `TypeDBConnectionError` | Network or connection failure |
+| `TypeDBAuthenticationError` | JWT authentication failure |
+| `TypeDBQueryError` | Query execution error (includes `.query` and `.details` attributes) |
+| `TypeDBServerError` | Server-side error |
+| `TypeDBValidationError` | Input validation error (e.g., duplicate database) |
 
-### TypeDBAuthenticationError
-Authentication-related errors.
+```python
+from typedb_client3 import (
+    TypeDBConnectionError,
+    TypeDBAuthenticationError,
+    TypeDBQueryError,
+    TypeDBServerError,
+    TypeDBValidationError
+)
 
-### TypeDBQueryError
-Query execution errors.
-
-**Attributes:**
-- `query`: The query that caused the error
-- `details`: Additional error details
-
-### TypeDBServerError
-Server-side errors.
-
-### TypeDBValidationError
-Validation errors (e.g., entity already exists).
+try:
+    client.execute_query("mydb", tql, TransactionType.WRITE)
+except TypeDBQueryError as e:
+    print(f"Query failed: {e}")
+    print(f"Query:   {e.query}")
+    print(f"Details: {e.details}")
+except TypeDBConnectionError as e:
+    print(f"Connection failed: {e}")
+except TypeDBValidationError as e:
+    print(f"Validation error: {e}")
+```
 
 ---
 
 ## Authentication & Security
 
 ### SecureTokenManager
-Manages JWT tokens with encryption for secure storage.
 
-**Usage:**
+Manages JWT tokens with in-memory encryption for secure storage and retrieval.
+
 ```python
 from typedb_client3 import SecureTokenManager
 
 manager = SecureTokenManager()
-token = manager.retrieve_token(encrypted_token)
-manager.clear_memory()
+# Tokens are encrypted at rest and cleared from memory on close
+```
+
+### Parameterized Queries
+
+Use `to_parameterized_insert_query()` and `to_parameterized_match_query()` on entity instances to generate injection-safe queries with UUID-based placeholders.
+
+```python
+person = Person(username="jdoe", full_name="Jane Doe", age=30)
+query, params = person.to_parameterized_insert_query()
+# query: "insert $p isa person, has username $person_username_a1b2c3d4, ..."
+# params: {"$person_username_a1b2c3d4": "jdoe", ...}
 ```
 
 ---
 
-## Validation Functions
+## Validation & Connection Pooling
 
-### validate_base_url(base_url: str) -> str
-Validate and normalize base URL.
+### Validation Functions
 
-### validate_credentials(username: Optional[str], password: Optional[str]) -> None
-Validate username and password.
+| Function | Description |
+|---|---|
+| `validate_base_url(url)` | Normalize and validate server URL |
+| `validate_credentials(username, password)` | Validate auth credentials |
+| `validate_timeout(timeout)` | Validate timeout value |
+| `validate_operation_timeouts(timeouts)` | Validate per-operation timeout dict |
 
-### validate_timeout(timeout: int) -> int
-Validate timeout value.
+### Connection Pooling
 
-### validate_operation_timeouts(timeouts: Dict[str, int]) -> Dict[str, int]
-Validate operation-specific timeouts.
+`create_optimized_session()` returns a `requests.Session` with connection pooling configured via:
 
-### create_optimized_session() -> requests.Session
-Create an HTTP session with connection pooling.
-
-**Default Constants:**
-- `DEFAULT_POOL_CONNECTIONS`: 10
-- `DEFAULT_POOL_MAXSIZE`: 100
-- `DEFAULT_MAX_RETRIES`: 3
-- `DEFAULT_BACKOFF_FACTOR`: 0.3
+| Constant | Default | Description |
+|---|---|---|
+| `DEFAULT_POOL_CONNECTIONS` | 10 | Number of connection pools |
+| `DEFAULT_POOL_MAXSIZE` | 100 | Max connections per pool |
+| `DEFAULT_MAX_RETRIES` | 3 | Retry attempts on failure |
+| `DEFAULT_BACKOFF_FACTOR` | 0.3 | Exponential backoff factor |
 
 ---
 
 ## Advanced Examples
 
-### Building Complex Queries
+### Structured Fetch with Nested Output (TypeQL v3)
 
 ```python
-from typedb_client3 import QueryBuilder
-
-# Complex match with relations and filters
-query = QueryBuilder().match()
-query.variable("a", "actor").has("actor-id", "A1")
-query.relation("messaging") \
-    .role("producer", "$a") \
-    .role("consumer", "$c") \
-    .role("message", "$m") \
-    .links()
-query.fetch(["a", "m"])
-query.limit(10)
-
-tql = query.get_tql()
-result = client.execute_query("mydb", tql, TransactionType.READ)
-```
-
-### Using Query Templates
-
-```python
-# Create reusable insert template
-insert_template = QueryBuilder.insert_template()
-insert_template.variable("a", "actor")
-
-# Insert multiple entities
-for actor_data in actor_list:
-    insert_template.update_variable("a", "actor", actor_data)
-    tql = insert_template.get_tql()
-    client.execute_query("mydb", tql, TransactionType.WRITE)
-```
-
-### Transaction with Multiple Operations
-
-```python
-with client.with_transaction("mydb", TransactionType.WRITE) as tx:
-    # Insert entities
-    tx.execute('insert $a1 isa actor, has actor-id "A1";')
-    tx.execute('insert $a2 isa actor, has actor-id "A2";')
-    
-    # Insert relations
-    tx.execute('insert (producer: $a1, consumer: $a2, message: $m) isa messaging;')
-    
-    # All operations committed atomically
-```
-
-### Entity Manager Usage
-
-```python
-manager = EntityManager(client, "mydb")
-
-# Insert entity
-actor = Actor(
-    actor_id="A1",
-    id_label="User1",
-    description="Test actor",
-    justification="Testing"
-)
-manager.put(actor)
-
-# Fetch entity
-found = manager.fetch_one(Actor, {"actor-id": "A1"})
-
-# Fetch all entities
-all_actors = manager.fetch_all(Actor)
-
-# Check existence
-if manager.exists(Actor, "A1"):
-    print("Actor exists")
-
-# Delete entity
-manager.delete(actor)
-```
-
-### Schema Management
-
-```python
-# Load schema from file
-client.load_schema("mydb", "schema.tql")
-
-# Get current schema
-schema = client.get_schema("mydb")
-print(schema)
-
-# Load schema from string
-schema_str = """
-define actor sub entity, has actor-id, has id-label;
+# Retrieve companies and their employees in nested JSON
+query = """
+match $c isa company;
+fetch {
+  "company": $c.name,
+  "employees": [
+    match $e isa employee; ($c, $e) isa employment;
+    fetch { "name": $e.full-name, "role": $e.role }
+  ]
+};
 """
-client.load_schema("mydb", schema_str)
+result = client.execute_query("hr", query, TransactionType.READ)
 ```
 
-### Database Management
+### Aggregation with reduce (TypeQL v3)
 
 ```python
-# List databases
-databases = client.list_databases()
-print(f"Databases: {databases}")
+# Count employees per company
+query = """
+match
+  $c isa company;
+  $e isa employee;
+  ($c, $e) isa employment;
+reduce $count = count groupby $c;
+"""
+result = client.execute_query("hr", query, TransactionType.READ)
+```
 
-# Create database
-client.create_database("mydb")
+### Idempotent Writes with put
 
-# Check existence
-if client.database_exists("mydb"):
-    print("Database exists")
+```python
+# put checks existence before inserting — safe for concurrent writes
+qb = QueryBuilder()
+qb.put().variable("p", "person", {"username": "jdoe", "full-name": "Jane Doe", "age": 30})
+client.execute_query("mydb", qb.get_tql(), TransactionType.WRITE)
+```
 
-# Connect (create if not exists)
-client.connect_database("mydb")
+### Polymorphic Query with label (TypeQL v3)
 
-# Clear data (keep schema)
-client.clear_database("mydb")
+```python
+# Retrieve all users with their type label
+query = """
+match $u isa user, has full-name $n;
+fetch {
+  "name": $n,
+  "type": $u.label
+};
+"""
+result = client.execute_query("mydb", query, TransactionType.READ)
+```
 
-# Wipe all data
-client.wipe_database("mydb", verify=True)
+### Reusable Template for Bulk Insert
 
-# Delete database
-client.delete_database("mydb")
+```python
+tmpl = QueryBuilder.insert_template()
+tmpl.variable("p", "person")
+
+people = [
+    {"username": "jdoe",   "full-name": "Jane Doe",    "age": 30},
+    {"username": "asmith", "full-name": "Alice Smith",  "age": 25},
+    {"username": "bjones", "full-name": "Bob Jones",    "age": 40},
+]
+
+for attrs in people:
+    tmpl.update_variable("p", "person", attrs)
+    client.execute_query("mydb", tmpl.get_tql(), TransactionType.WRITE)
+```
+
+### Transaction with QueryBuilder
+
+```python
+q1 = QueryBuilder().insert()
+q1.variable("p", "person", {"username": "jdoe", "full-name": "Jane Doe"})
+
+q2 = QueryBuilder().insert()
+q2.variable("p", "person", {"username": "asmith", "full-name": "Alice Smith"})
+
+with client.with_transaction("mydb", TransactionType.WRITE) as tx:
+    tx.execute_builder(q1)
+    tx.execute_builder(q2)
+```
+
+### Ad-hoc Recursive Function with with (TypeQL v3)
+
+```python
+query = """
+with fun reachable($start: node) -> { node }:
+  match { ($start, $target) isa edge; }
+     or { let $via in reachable($start); ($via, $target) isa edge; };
+  return { $target };
+match $n isa node, has node-id "A";
+let $r in reachable($n);
+fetch { "reachable": $r.node-id };
+"""
+result = client.execute_query("graph", query, TransactionType.READ)
 ```
 
 ---
 
 ## Best Practices
 
-1. **Use Query Templates**: Build query templates once and reuse them for better performance
-2. **Use Transactions**: Group multiple operations in transactions for atomicity
-3. **Use EntityManager**: Leverage high-level entity operations for common CRUD tasks
-4. **Parameterized Queries**: Use `to_parameterized_insert_query()` for security
-5. **Connection Pooling**: The client automatically uses connection pooling
-6. **Error Handling**: Always catch and handle TypeDB exceptions appropriately
-7. **Resource Cleanup**: Call `client.close()` when done to release resources
+1. **Use QueryBuilder over raw strings** — avoids syntax errors and is LLM-friendly
+2. **Use `put` for idempotent writes** — prevents duplicates in concurrent scenarios
+3. **Use transactions for bulk operations** — groups writes atomically for performance and safety
+4. **Use parameterized queries** — call `to_parameterized_insert_query()` for user-supplied data
+5. **Use `fetch { }` with explicit keys** — TypeQL v3 fetch requires structured JSON output syntax
+6. **Use `links` in match patterns** — TypeQL v3 uses `links (role: $var)` not bare tuple syntax
+7. **Define schemas with `entity Foo`** — TypeQL v3 schema syntax, not `Foo sub entity`
+8. **Call `client.close()`** — releases connections and clears tokens from memory
 
 ---
 

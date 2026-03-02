@@ -1,432 +1,366 @@
 # typedb_client3 - TypeDB v3 Python Client Library
 
-A modern Python client library for TypeDB v3 that provides a high-level, programmatic interface for database operations. This library removes the dependency on writing raw TypeQL (TypeDB Query Language) syntax, making it easier for LLM agents and developers to construct queries correctly and efficiently.
+A modern Python client library for TypeDB v3 that provides a high-level, programmatic interface for database operations. This library removes the dependency on writing raw TypeQL (TypeDB Query Language) syntax, making it easier for LLM agents and developers to construct queries correctly and efficiently against the TypeDB v3 HTTP API.
 
-## 🚀 Key Features
+> **All TypeQL examples in this document use TypeDB v3 / TypeQL 3.0 syntax.**
+> Key distinctions from v2: schema uses `entity Foo` (not `Foo sub entity`), fetch uses `fetch { "key": $var.attr }` (not `fetch $a, $b`), and role players use `links (role: $var)`.
 
-### TypeDB v3 Full Support
-- **Complete HTTP API Coverage**: Full support for TypeDB v3 HTTP API including all modern query operations
-- **Modern Query Syntax**: Native support for `fetch`, `put`, `links`, `label`, `reduce`, and `with` keywords
-- **Schema Operations**: Define, undefine, and redefine schemas programmatically
-- **Database Management**: Create, delete, list, and manage databases with ease
+## Why typedb_client3?
 
-### Developer-Friendly Query Building
-- **Fluent Query Builder**: Chainable methods for building queries without raw syntax
-- **Reusable Query Templates**: Build once, execute many times with parameter updates
-- **Method Chaining**: Intuitive API design for rapid development
-- **Type Safety**: Clear separation between READ and WRITE operations
+This library was developed to address a critical need: **removing the dependency on TypeDB 3 TQL syntax** which most LLM coding agents struggle to construct correctly. By providing a programmatic, fluent API, it enables:
 
-### Entity & Relation Abstractions
-- **ORM-Like Interface**: Dataclass-based entities with automatic query generation
-- **Predefined Schemas**: Ready-to-use entity and relation classes for common patterns
-- **Entity Manager**: High-level CRUD operations without writing TypeQL
-- **Flexible Relations**: Support for complex relation patterns and role players
+- **AI-Friendly Construction**: LLMs generate method calls instead of raw syntax — no more v2/v3 syntax confusion
+- **Developer Productivity**: IDE autocomplete and type hints throughout
+- **Reusable Templates**: Build query templates once, execute many times with parameter updates
+- **Injection Safety**: Parameterized query generation for user-supplied data
+- **Full TypeDB v3 Coverage**: Native support for `put`, `links`, `fetch {}`, `reduce`, `with`
+
+---
+
+## Features
+
+### TypeDB v3 Full API Support
+- Complete HTTP API coverage for TypeDB v3
+- Modern query keywords: `fetch`, `put`, `links`, `label`, `reduce`, `with`
+- Schema operations: `define`, `undefine`, `redefine`
+- Database management: create, delete, list, wipe
+
+### Fluent Query Builder
+- Chainable method API — no raw TypeQL required
+- Reusable query templates with parameter updates
+- Deep clone support for query variations
+- Produces valid TypeQL v3 strings via `get_tql()`
+
+### Entity & Relation Base Classes
+- Dataclass-based `Entity` and `Relation` base classes
+- Subclass to model any TypeDB v3 schema
+- Automatic `snake_case` → `kebab-case` field mapping
+- Auto-generated INSERT, MATCH, and parameterized queries
 
 ### Transaction Support
-- **Atomic Operations**: Execute multiple operations in a single transaction
-- **Context Managers**: Pythonic `with` statement syntax for transaction handling
-- **Batch Operations**: Insert or update multiple entities efficiently
-- **Rollback Safety**: Automatic rollback on errors
+- Atomic multi-operation transactions via context manager
+- `execute_builder()` for QueryBuilder integration
+- Batch operations for efficient bulk writes
 
 ### Security & Performance
-- **JWT Authentication**: Secure token-based authentication with encryption
-- **Connection Pooling**: Optimized HTTP sessions with connection reuse
-- **Parameterized Queries**: Protection against injection attacks
-- **Configurable Timeouts**: Fine-grained control over operation timeouts
+- JWT authentication with encrypted token storage
+- Connection pooling with configurable pool sizes
+- Parameterized queries to prevent injection attacks
+- Per-operation timeout configuration
 
-## 📦 Installation
+---
+
+## Installation
 
 ```bash
 pip install typedb-client3
 ```
 
-## 🎯 Quick Start
+---
 
-### Basic Usage
+## Quick Start
+
+### Connect and Query
 
 ```python
-from typedb_client3 import TypeDBClient, TransactionType
+from typedb_client3 import TypeDBClient, TransactionType, QueryBuilder
 
-# Create client with authentication
 client = TypeDBClient(
     base_url="http://localhost:8000",
     username="admin",
     password="password"
 )
 
-# Execute a simple query
-result = client.execute_query(
-    database="mydb",
-    query='match $a isa actor; fetch $a;',
-    transaction_type=TransactionType.READ
-)
+# Build a query — no raw TypeQL needed
+qb = QueryBuilder()
+qb.match().variable("u", "user", {"username": "jdoe"})
+qb.fetch({"username": "$u.username", "full-name": "$u.full-name"})
 
-print(result)
+result = client.execute_query("mydb", qb.get_tql(), TransactionType.READ)
 ```
 
-### Using the Query Builder
+### Define Your Schema as Python Classes
 
 ```python
-from typedb_client3 import QueryBuilder
+from dataclasses import dataclass
+from typing import Optional
+from typedb_client3 import Entity, Relation
 
-# Build a query without raw TypeQL syntax
-query = QueryBuilder() \
-    .match() \
-    .variable("a", "actor") \
-    .has("actor-id", "A1") \
-    .fetch(["a"]) \
-    .limit(10)
+@dataclass
+class Person(Entity):
+    _type = "person"
+    _key_attr = "username"
 
-# Execute the query
-tql = query.get_tql()
-result = client.execute_query("mydb", tql, TransactionType.READ)
+    username: str
+    full_name: str        # maps to TypeDB attribute: full-name
+    age: int
+    email: Optional[str] = None
+
+@dataclass
+class Friendship(Relation):
+    _type = "friendship"
+    _roles = ["friend"]
+
+    friend1: Person
+    friend2: Person
 ```
 
-### Entity Manager Usage
+### Insert and Query Entities
 
 ```python
-from typedb_client3 import EntityManager, Actor
+person = Person(username="jdoe", full_name="Jane Doe", age=30)
 
-# Create an entity manager
-manager = EntityManager(client, "mydb")
+# Auto-generated TypeQL v3 INSERT query
+client.execute_query("mydb", person.to_insert_query(), TransactionType.WRITE)
+# insert $p isa person, has username "jdoe", has full-name "Jane Doe", has age 30;
 
-# Create and insert an entity
-actor = Actor(
-    actor_id="A1",
-    id_label="User1",
-    description="System user",
-    justification="Required for authentication"
-)
-manager.put(actor)
-
-# Fetch entities
-all_actors = manager.fetch_all(Actor)
-specific_actor = manager.fetch_one(Actor, {"actor-id": "A1"})
+# Auto-generated MATCH query by key
+result = client.execute_query("mydb", person.to_match_query(), TransactionType.READ)
+# match $p isa person, has username "jdoe";
 ```
 
-### Transaction Operations
+---
 
-```python
-# Execute multiple operations atomically
-with client.with_transaction("mydb", TransactionType.WRITE) as tx:
-    tx.execute('insert $a1 isa actor, has actor-id "A1";')
-    tx.execute('insert $a2 isa actor, has actor-id "A2";')
-    tx.execute('insert (producer: $a1, consumer: $a2, message: $m) isa messaging;')
-    # All operations committed when exiting context
-```
-
-## 🔧 Core Capabilities
+## Core Capabilities
 
 ### 1. Database Management
 
 ```python
-# List all databases
+# List, create, check, connect
 databases = client.list_databases()
-
-# Create a new database
 client.create_database("mydb")
+client.database_exists("mydb")
+client.connect_database("mydb")   # creates if not exists
 
-# Check if database exists
-if client.database_exists("mydb"):
-    print("Database exists")
-
-# Connect to database (create if needed)
-client.connect_database("mydb")
-
-# Clear all data (keep schema)
+# Clear data (keep schema) or wipe entirely
 client.clear_database("mydb")
-
-# Safely wipe all data with verification
 client.wipe_database("mydb", verify=True)
 
-# Delete database
+# Delete
 client.delete_database("mydb")
 ```
 
 ### 2. Schema Operations
 
 ```python
-# Load schema from file
+# Load from file
 client.load_schema("mydb", "schema.tql")
 
-# Load schema from string
+# Load from string — TypeQL v3 syntax
 schema = """
-define actor sub entity, has actor-id, has id-label;
+define
+  entity person, owns username @key, owns full-name, owns age,
+    plays friendship:friend;
+  attribute username, value string;
+  attribute full-name, value string;
+  attribute age, value integer;
+  relation friendship, relates friend @card(0..);
 """
 client.load_schema("mydb", schema)
 
 # Retrieve current schema
-current_schema = client.get_schema("mydb")
-print(current_schema)
+print(client.get_schema("mydb"))
 ```
 
 ### 3. Query Execution
 
 ```python
-# Raw query execution
+# Single query
 result = client.execute_query(
     database="mydb",
-    query='match $a isa actor; fetch $a;',
+    query='match $u isa person; fetch { "username": $u.username };',
     transaction_type=TransactionType.READ
 )
 
 # Multiple queries in one transaction
-operations = [
-    {"query": 'insert $a isa actor, has actor-id "A1";'},
-    {"query": 'insert $a isa actor, has actor-id "A2";'},
-]
-result = client.execute_transaction(
-    "mydb", 
-    TransactionType.WRITE, 
-    operations
-)
-
-# Variable-length query execution
-results = client.execute_queries(
+client.execute_queries(
     "mydb",
-    'insert $a isa actor, has actor-id "A1";',
-    'insert $a isa actor, has actor-id "A2";',
+    'insert $u isa person, has username "jdoe", has full-name "Jane Doe";',
+    'insert $u isa person, has username "asmith", has full-name "Alice Smith";',
     transaction_type=TransactionType.WRITE
 )
 ```
 
-### 4. Advanced Query Building
+### 4. Fluent Query Builder
 
 ```python
-# Complex queries with relations
-query = QueryBuilder() \
-    .match() \
-    .variable("a", "actor", {"actor-id": "A1"}) \
-    .relation("messaging") \
-        .role("producer", "$a") \
-        .role("consumer", "$c") \
-        .role("message", "$m") \
-        .links() \
-    .end_relation() \
-    .fetch(["a", "m"]) \
-    .order_by("m", "timestamp") \
-    .limit(10)
+from typedb_client3 import QueryBuilder
 
-tql = query.get_tql()
+# Match with relation using TypeQL v3 links keyword
+qb = QueryBuilder()
+qb.match()
+qb.variable("u", "person", {"username": "jdoe"})
+qb.variable("v", "person")
+qb.relation("friendship") \
+    .role("friend", "$u") \
+    .role("friend", "$v") \
+    .links() \
+    .end_relation()
+qb.fetch({"friend": "$v.username"})
+qb.limit(10)
+
+result = client.execute_query("mydb", qb.get_tql(), TransactionType.READ)
 ```
 
-### 5. Query Templates & Reuse
+### 5. Reusable Query Templates
 
 ```python
-# Create reusable insert template
-insert_template = QueryBuilder.insert_template()
-insert_template.variable("a", "actor")
+# Build once, execute many times
+tmpl = QueryBuilder.insert_template()
+tmpl.variable("p", "person")
 
-# Use template for multiple inserts
-for actor_id in ["A1", "A2", "A3"]:
-    insert_template.update_variable("a", "actor", {"actor-id": actor_id})
-    tql = insert_template.get_tql()
-    client.execute_query("mydb", tql, TransactionType.WRITE)
+people = [
+    {"username": "jdoe",   "full-name": "Jane Doe",   "age": 30},
+    {"username": "asmith", "full-name": "Alice Smith", "age": 25},
+]
 
-# Clone queries for variations
-base_query = QueryBuilder.match_template().variable("x", "actor")
-query1 = base_query.clone().update_variable("x", "actor", {"actor-id": "A1"})
-query2 = base_query.clone().update_variable("x", "actor", {"actor-id": "A2"})
+for attrs in people:
+    tmpl.update_variable("p", "person", attrs)
+    client.execute_query("mydb", tmpl.get_tql(), TransactionType.WRITE)
+
+# Clone for independent variations
+base = QueryBuilder.match_template()
+base.variable("p", "person")
+
+q1 = base.clone()
+q1.update_variable("p", "person", {"username": "jdoe"})
+
+q2 = base.clone()
+q2.update_variable("p", "person", {"username": "asmith"})
 ```
 
-### 6. Entity Operations
+### 6. Transactions
 
 ```python
-# Insert entity with parameterized query
-actor = Actor(
-    actor_id="A1",
-    id_label="User1",
-    description="Test actor",
-    justification="Testing"
-)
-query, params = actor.to_parameterized_insert_query()
-# Execute with parameters for security
+# Context manager — all operations committed atomically
+with client.with_transaction("mydb", TransactionType.WRITE) as tx:
+    tx.execute('insert $p isa person, has username "jdoe";')
+    tx.execute('insert $p isa person, has username "asmith";')
 
-# Match query by key
-match_query = actor.to_match_query()
+# With QueryBuilder
+q1 = QueryBuilder().insert()
+q1.variable("p", "person", {"username": "jdoe", "full-name": "Jane Doe"})
 
-# Check existence
-if manager.exists(Actor, "A1"):
-    print("Actor exists")
+q2 = QueryBuilder().insert()
+q2.variable("p", "person", {"username": "asmith", "full-name": "Alice Smith"})
+
+with client.with_transaction("mydb", TransactionType.WRITE) as tx:
+    tx.execute_builder(q1)
+    tx.execute_builder(q2)
 ```
 
-### 7. Relation Operations
+### 7. Entity Manager
 
 ```python
-# Create relations between entities
-messaging = Messaging(
-    producer=actor1,
-    consumer=actor2,
-    message=msg
-)
-manager.insert_relation(messaging)
+from typedb_client3 import EntityManager
+
+manager = EntityManager(client, "mydb")
+
+person = Person(username="jdoe", full_name="Jane Doe", age=30)
+
+manager.put(person)                                        # idempotent insert
+manager.insert(person)                                     # strict insert
+manager.exists(Person, "jdoe")                             # check by key
+manager.fetch_one(Person, {"username": "jdoe"})            # fetch single
+manager.fetch_all(Person)                                  # fetch all
+manager.delete(person)                                     # delete
 ```
 
-## 🏗️ Architecture
+### 8. Aggregation and Analytics
 
-### Layered Design
-
-```
-┌─────────────────────────────────────┐
-│     High-Level Entity Manager        │
-│  (ORM-like CRUD operations)          │
-└──────────────────┬──────────────────┘
-                   │
-┌──────────────────┴──────────────────┐
-│         Query Builder                │
-│  (Fluent API for query building)    │
-└──────────────────┬──────────────────┘
-                   │
-┌──────────────────┴──────────────────┐
-│      TypeDB HTTP Client             │
-│  (API calls, auth, pooling)         │
-└─────────────────────────────────────┘
-```
-
-### Core Components
-
-1. **TypeDBClient**: Main client for HTTP API interactions
-2. **QueryBuilder**: Fluent API for building queries
-3. **EntityManager**: High-level entity operations
-4. **Entity/Relation Classes**: Dataclass abstractions
-5. **TransactionContext**: Transaction management
-6. **SecureTokenManager**: JWT authentication
-
-## 📚 Available Entity Types
-
-The library includes predefined entity classes for common patterns:
-
-- **Actor**: System component representation
-- **Action**: System actions
-- **Message**: Inter-actor communication
-- **DataEntity**: Domain data
-- **Requirement**: Functional/non-functional requirements
-- **ActionAggregate/MessageAggregate**: Grouping entities
-- **Constraint**: Message constraints
-- **Category**: Categorization
-- **TextBlock**: Anchored text
-- **Concept**: Candidate concepts
-- **SpecDocument/SpecSection**: Specification structures
-
-## 🔗 Relation Types
-
-Predefined relation classes for common patterns:
-
-- **Messaging**: Producer-consumer-message relationships
-- **Anchoring**: Text-to-entity anchoring
-- **Membership**: Group membership
-- **Outlining**: Hierarchical structures
-- **Categorization**: Category classification
-- **Requiring**: Requirement dependencies
-- **ConstrainedBy**: Constraint relationships
-- **MessagePayload**: Message-data associations
-- **Filesystem**: Folder/file structures
-
-## 🛡️ Security Features
-
-### Authentication
-- JWT token-based authentication
-- Secure token encryption for storage
-- Token access logging and auditing
-
-### Query Safety
-- Parameterized queries to prevent injection
-- Automatic value escaping for TypeQL
-- Input validation for all parameters
-
-### Connection Security
-- Configurable timeout settings
-- Connection pooling with limits
-- Automatic session cleanup
-
-## ⚡ Performance Optimizations
-
-1. **Connection Pooling**: Reuse HTTP connections for better performance
-2. **Query Templates**: Build once, execute many times
-3. **Batch Operations**: Group multiple operations in single transactions
-4. **Lazy Building**: Queries built only when needed
-5. **Optimized Sessions**: Configurable pool sizes and retry logic
-
-## 🧪 Testing
-
-```bash
-# Install development dependencies
-pip install -e ".[dev]"
-
-# Run all tests
-pytest tests/ -v
-
-# Run unit tests only
-pytest tests/ -v -m unit
-
-# Run integration tests only (requires TypeDB server)
-pytest tests/ -v -m integration
-
-# Run with coverage
-pytest tests/ --cov=typedb_client3 --cov-report=html
-```
-
-## 📖 Documentation
-
-- **API Documentation**: See [API_DOCUMENTATION.md](API_DOCUMENTATION.md) for detailed API reference
-- **Examples**: Check the `examples/` directory for usage examples
-- **TypeDB v3 Docs**: [Official TypeDB v3 Documentation](https://typedb.com/docs/)
-
-## 🤝 Use Cases
-
-### Perfect For:
-- **LLM Integration**: Enables AI agents to construct queries programmatically
-- **Application Development**: Rapid development of TypeDB-backed applications
-- **Data Migration**: Efficient bulk operations with transactions
-- **Schema Management**: Programmatic schema definition and modification
-- **Complex Queries**: Builder pattern simplifies complex query construction
-
-### Ideal Scenarios:
-- Building applications that use TypeDB v3 as backend
-- Implementing TypeDB operations in Python microservices
-- Creating TypeDB integration for AI/ML workflows
-- Developing data ingestion pipelines
-- Building analytics dashboards with TypeDB
-
-## 🔄 Comparison with Raw TypeQL
-
-### Raw TypeQL (Without this library):
 ```python
+# Count instances grouped by type — TypeQL v3 reduce
 query = """
-match $a isa actor, has actor-id "A1";
-    $r isa messaging, links (producer: $a, consumer: $c, message: $m);
-fetch $a, $m;
+match
+  $p isa person, has age $a;
+reduce $avg_age = mean($a);
 """
-result = client.execute_query("mydb", query)
+result = client.execute_query("mydb", query, TransactionType.READ)
+
+# Structured nested fetch — TypeQL v3
+query = """
+match $c isa company;
+fetch {
+  "company": $c.name,
+  "employees": [
+    match $e isa employee; ($c, $e) isa employment;
+    fetch { "name": $e.full-name, "role": $e.role }
+  ]
+};
+"""
+result = client.execute_query("hr", query, TransactionType.READ)
 ```
 
-### With typedb_client3:
+---
+
+## TypeQL v3 Syntax Reference (Quick Guide)
+
+| Concept | TypeQL v3 ✅ | TypeQL v2 ❌ |
+|---|---|---|
+| Entity definition | `entity person` | `person sub entity` |
+| Attribute definition | `attribute username, value string` | `username sub attribute, datatype string` |
+| Relation definition | `relation friendship, relates friend` | `friendship sub relation, relates friend` |
+| Role player pattern | `$r isa friendship, links (friend: $u)` | `$r ($u) isa friendship` |
+| Fetch output | `fetch { "name": $u.username }` | `fetch $u` |
+| Idempotent write | `put $u isa person, has username "x"` | *(not available)* |
+| Aggregation | `reduce $c = count groupby $x` | `get; count;` |
+
+---
+
+## Entity & Relation Base Classes
+
+Subclass `Entity` and `Relation` to model your TypeDB v3 schema in Python. Fields use `snake_case` and are automatically converted to `kebab-case` for TypeDB attribute names.
+
 ```python
-query = QueryBuilder() \
-    .match() \
-    .variable("a", "actor", {"actor-id": "A1"}) \
-    .relation("messaging") \
-        .role("producer", "$a") \
-        .role("consumer", "$c") \
-        .role("message", "$m") \
-        .links() \
-    .end_relation() \
-    .fetch(["a", "m"])
+from dataclasses import dataclass
+from typing import Optional
+from typedb_client3 import Entity, Relation
 
-result = client.execute_query("mydb", query.get_tql())
+@dataclass
+class Company(Entity):
+    _type = "company"
+    _key_attr = "company-id"
+
+    company_id: str          # maps to: company-id
+    name: str
+    industry: Optional[str] = None
+
+@dataclass
+class Employee(Entity):
+    _type = "employee"
+    _key_attr = "employee-id"
+
+    employee_id: str         # maps to: employee-id
+    full_name: str           # maps to: full-name
+    role: str
+
+@dataclass
+class Employment(Relation):
+    _type = "employment"
+    _roles = ["employer", "employee"]
+
+    employer: Company
+    employee: Employee
 ```
 
-**Benefits:**
-- ✅ No raw syntax to remember
-- ✅ Type safety and autocomplete
-- ✅ Reusable query templates
-- ✅ Better error messages
-- ✅ Easier refactoring
-- ✅ LLM-friendly construction
+### Auto-Generated Queries
 
-## 🐛 Error Handling
+```python
+emp = Employee(employee_id="E001", full_name="Jane Doe", role="Engineer")
 
-The library provides specific exception types for different error scenarios:
+emp.to_insert_query()
+# insert $e isa employee, has employee-id "E001", has full-name "Jane Doe", has role "Engineer";
+
+emp.to_match_query()
+# match $e isa employee, has employee-id "E001";
+
+query, params = emp.to_parameterized_insert_query()
+# Injection-safe parameterized query
+```
+
+---
+
+## Error Handling
 
 ```python
 from typedb_client3 import (
@@ -438,87 +372,68 @@ from typedb_client3 import (
 )
 
 try:
-    client.execute_query("mydb", query, TransactionType.WRITE)
+    client.execute_query("mydb", tql, TransactionType.WRITE)
 except TypeDBQueryError as e:
     print(f"Query failed: {e}")
-    print(f"Query: {e.query}")
+    print(f"Query:   {e.query}")
     print(f"Details: {e.details}")
 except TypeDBConnectionError as e:
     print(f"Connection failed: {e}")
 except TypeDBValidationError as e:
     print(f"Validation error: {e}")
+finally:
+    client.close()
 ```
-
-## 🎨 Customization
-
-### Custom Entities
-```python
-from typedb_client3 import Entity
-
-@dataclass
-class CustomEntity(Entity):
-    _type = "custom-entity"
-    _key_attr = "custom-id"
-    
-    custom_id: str
-    name: str
-    value: int
-```
-
-### Custom Relations
-```python
-from typedb_client3 import Relation
-
-@dataclass
-class CustomRelation(Relation):
-    _type = "custom-relation"
-    _roles = ["role1", "role2"]
-    
-    entity1: Entity
-    entity2: Entity
-```
-
-## 📝 Development
-
-### Project Structure
-```
-typedb_client3/
-├── client.py           # Main HTTP client
-├── query_builder.py    # Fluent query builder
-├── entities.py         # Entity/Relation classes
-├── entity_manager.py   # High-level ORM operations
-├── transactions.py    # Transaction context
-├── auth.py            # JWT authentication
-├── validation.py      # Input validation
-├── exceptions.py      # Custom exceptions
-└── tests/             # Test suite
-```
-
-### Contributing
-Contributions are welcome! Please ensure all tests pass before submitting PRs.
-
-## 📄 License
-
-[Add license information here]
-
-## 🔗 Links
-
-- **TypeDB v3**: https://typedb.com/
-- **Documentation**: [API_DOCUMENTATION.md](API_DOCUMENTATION.md)
-- **Issues**: GitHub Issues
-- **TypeDB CLI Tools**: Provided by the modellm project
-
-## 💡 Why typedb_client3?
-
-This library was developed to address a critical need: **removing dependencies on TypeDB 3 TQL syntax** which most LLM coding agents struggle to construct correctly. By providing a programmatic, fluent API, we enable:
-
-1. **AI-Friendly**: LLMs can construct queries using method calls instead of raw syntax
-2. **Developer-Friendly**: IDE autocomplete and type hints improve productivity
-3. **Maintainable**: Query structure is explicit and easy to modify
-4. **Reusable**: Query templates reduce code duplication
-5. **Safe**: Parameterized queries prevent injection attacks
-6. **Modern**: Full support for TypeDB v3 features like `put`, `links`, `reduce`
 
 ---
 
-**Built for developers who want the power of TypeDB without the complexity of raw query syntax.**
+## Project Structure
+
+```
+typedb_client3/
+├── client.py            # TypeDBClient — HTTP API, auth, database management
+├── query_builder.py     # QueryBuilder, Variable, RelationBuilder
+├── entities.py          # Entity and Relation base classes
+├── entity_manager.py    # EntityManager — high-level CRUD
+├── transactions.py      # TransactionContext
+├── auth.py              # SecureTokenManager — JWT handling
+├── validation.py        # Input validation and connection pooling
+├── exceptions.py        # Exception hierarchy
+└── tests/               # Unit and integration test suite
+```
+
+---
+
+## Development
+
+```bash
+# Install with dev dependencies
+pip install -e ".[dev]"
+
+# Run all tests
+pytest tests/ -v
+
+# Unit tests only
+pytest tests/ -v -m unit
+
+# Integration tests (requires running TypeDB server)
+pytest tests/ -v -m integration
+
+# With coverage
+pytest tests/ --cov=typedb_client3 --cov-report=html
+```
+
+**Test server:** `http://localhost:8000` — credentials: `admin` / `password`
+
+---
+
+## Documentation
+
+- **Full API Reference**: [API_DOCUMENTATION.md](API_DOCUMENTATION.md)
+- **TypeDB v3**: https://typedb.com/docs/
+
+---
+
+## License
+
+[Add license information here]

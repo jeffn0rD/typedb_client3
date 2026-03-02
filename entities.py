@@ -38,6 +38,9 @@ class Entity:
     Field names use snake_case and are automatically converted to kebab-case
     for TypeDB attribute names (e.g., full_name -> full-name).
 
+    Fields beginning with '_' (such as _type and _key_attr) are treated as
+    class-level metadata and are excluded from generated queries.
+
     Class Variables:
         _type: TypeDB entity type name (e.g., "person")
         _key_attr: Primary key attribute name in kebab-case (e.g., "username")
@@ -56,14 +59,26 @@ class Entity:
     _type: ClassVar[str] = ""  # TypeDB entity type name
     _key_attr: ClassVar[Optional[str]] = None  # Primary key attribute
 
+    def _data_fields(self) -> List[str]:
+        """Return dataclass field names that are actual data attributes.
+
+        Excludes private/ClassVar fields (those starting with '_') which
+        are used for schema metadata (_type, _key_attr).
+
+        Returns:
+            List of field names to use in query generation
+        """
+        return [
+            name for name in self.__dataclass_fields__.keys()
+            if not name.startswith('_')
+        ]
+
     def get_key_value(self) -> Any:
         """Get the value of the key attribute."""
         if not self._key_attr:
             raise ValueError(f"No key attribute defined for {self.__class__.__name__}")
 
-        # Find the attribute in the dataclass fields
-        for field_name, field in self.__dataclass_fields__.items():
-            # Convert field name to TypeDB attribute name (id_label -> id-label)
+        for field_name in self._data_fields():
             db_attr_name = field_name.replace('_', '-')
             if db_attr_name == self._key_attr:
                 return getattr(self, field_name)
@@ -81,15 +96,12 @@ class Entity:
             query = person.to_insert_query()
             # insert $p isa person, has username "jdoe", has full-name "Jane Doe", has age 30;
         """
-        var_name = self.__class__.__name__.lower()[:1]  # Single letter variable
-
+        var_name = self.__class__.__name__.lower()[:1]
         parts = [f"${var_name} isa {self._type}"]
 
-        # Add attributes
-        for field_name in self.__dataclass_fields__.keys():
+        for field_name in self._data_fields():
             value = getattr(self, field_name)
             if value is not None:
-                # Convert snake_case to kebab-case for TypeDB
                 db_attr_name = field_name.replace('_', '-')
                 parts.append(f'has {db_attr_name} {self._escape_value(value)}')
 
@@ -121,7 +133,7 @@ class Entity:
         compatibility. Use to_parameterized_insert_query() instead for security.
         """
         if isinstance(value, str):
-            escaped = value.replace('\\', '\\\\').replace('"', '\&quot;')
+            escaped = value.replace('\\', '\\\\').replace('"', '\"')
             return f'"{escaped}"'
         elif isinstance(value, bool):
             return str(value).lower()
@@ -146,11 +158,9 @@ class Entity:
         if value is None:
             return (None, None)
 
-        # Generate unique placeholder using entity type, attribute, and UUID
         unique_suffix = str(uuid.uuid4())[:8]
         placeholder = f"${self._type}_{attribute_name}_{unique_suffix}"
 
-        # Return placeholder and the raw value (to be bound by the client)
         return (placeholder, value)
 
     def to_parameterized_insert_query(self) -> Tuple[str, Dict[str, Any]]:
@@ -168,16 +178,13 @@ class Entity:
             person = Person(username="jdoe", full_name="Jane Doe", age=30)
             query, params = person.to_parameterized_insert_query()
         """
-        var_name = self.__class__.__name__.lower()[:1]  # Single letter variable
+        var_name = self.__class__.__name__.lower()[:1]
         parameters: Dict[str, Any] = {}
-
         parts = [f"${var_name} isa {self._type}"]
 
-        # Add attributes with parameterized placeholders
-        for field_name in self.__dataclass_fields__.keys():
+        for field_name in self._data_fields():
             value = getattr(self, field_name)
             if value is not None:
-                # Convert snake_case to kebab-case for TypeDB
                 db_attr_name = field_name.replace('_', '-')
                 placeholder, param_value = self._create_parameterized_value(value, field_name)
                 if placeholder:
@@ -208,13 +215,9 @@ class Entity:
         key_value = self.get_key_value()
         var_name = self.__class__.__name__.lower()[:1]
 
-        # Convert key attribute from kebab-case to snake_case for field lookup
         key_field_name = self._key_attr.replace('-', '_')
-
         placeholder, param_value = self._create_parameterized_value(key_value, key_field_name)
-
         parameters = {placeholder: param_value} if placeholder else {}
-
         query = f'match ${var_name} isa {self._type}, has {self._key_attr} {placeholder};'
 
         return (query, parameters)

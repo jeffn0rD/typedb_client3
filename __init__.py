@@ -4,7 +4,7 @@ A Python library for TypeDB v3 operations with support for:
 - TypeDB v3 HTTP API (fetch, put, links, label, reduce, with)
 - Query builder with reusable templates
 - Transaction support
-- Entity/Relation abstractions
+- Entity/Relation base class abstractions
 - Authentication and connection pooling
 """
 
@@ -28,12 +28,6 @@ from .validation import (
 from .query_builder import QueryBuilder, Variable, RelationBuilder
 from .entities import (
     Entity, Relation,
-    Actor, Action, Message, DataEntity, Requirement,
-    ActionAggregate, MessageAggregate, Constraint, Category,
-    TextBlock, Concept, SpecDocument, SpecSection,
-    Messaging, Anchoring, Membership, MembershipSeq,
-    Outlining, Categorization, Requiring, ConstrainedBy,
-    MessagePayload, Filesystem
 )
 from .exceptions import (
     TypeDBError, TypeDBConnectionError, TypeDBAuthenticationError,
@@ -56,44 +50,19 @@ __all__ = [
     "DEFAULT_POOL_MAXSIZE",
     "DEFAULT_MAX_RETRIES",
     "DEFAULT_BACKOFF_FACTOR",
-    
+
     # Query Builder
     "QueryBuilder",
     "Variable",
     "RelationBuilder",
-    
-    # Entities
+
+    # Entity/Relation Base Classes
     "Entity",
     "Relation",
-    "Actor",
-    "Action",
-    "Message",
-    "DataEntity",
-    "Requirement",
-    "ActionAggregate",
-    "MessageAggregate",
-    "Constraint",
-    "Category",
-    "TextBlock",
-    "Concept",
-    "SpecDocument",
-    "SpecSection",
-    
-    # Relations
-    "Messaging",
-    "Anchoring",
-    "Membership",
-    "MembershipSeq",
-    "Outlining",
-    "Categorization",
-    "Requiring",
-    "ConstrainedBy",
-    "MessagePayload",
-    "Filesystem",
-    
+
     # Entity Manager
     "EntityManager",
-    
+
     # Exceptions
     "TypeDBError",
     "TypeDBConnectionError",

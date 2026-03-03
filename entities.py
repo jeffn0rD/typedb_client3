@@ -133,7 +133,7 @@ class Entity:
         compatibility. Use to_parameterized_insert_query() instead for security.
         """
         if isinstance(value, str):
-            escaped = value.replace('\\', '\\\\').replace('"', '\"')
+            escaped = value.replace('\\', '\\\\').replace('"', '\\"')
             return f'"{escaped}"'
         elif isinstance(value, bool):
             return str(value).lower()
@@ -267,3 +267,238 @@ class Relation:
                 role_parts.append(f"{role}: ${variables[role]}")
 
         return f"({', '.join(role_parts)}) isa {self._type};"
+
+
+# ==================== SPECIFICATION ENTITIES ====================
+
+@dataclass
+class SpecDocument(Entity):
+    """Spec document entity."""
+    _type: ClassVar[str] = "spec-document"
+    _key_attr: ClassVar[str] = "spec-doc-id"
+    spec_doc_id: Optional[str] = None
+    title: Optional[str] = None
+    version: Optional[str] = None
+    status: Optional[str] = None
+    description: Optional[str] = None
+    filename: Optional[str] = None
+
+
+@dataclass
+class SpecSection(Entity):
+    """Spec section entity."""
+    _type: ClassVar[str] = "spec-section"
+    _key_attr: ClassVar[str] = "spec-section-id"
+    spec_section_id: Optional[str] = None
+    title: Optional[str] = None
+    id_label: Optional[str] = None
+    order: Optional[int] = None
+
+
+@dataclass
+class TextBlock(Entity):
+    """Text block entity."""
+    _type: ClassVar[str] = "text-block"
+    _key_attr: ClassVar[str] = "anchor-id"
+    anchor_id: Optional[str] = None
+    id_label: Optional[str] = None
+    anchor_type: Optional[str] = None
+    text: Optional[str] = None
+    order: Optional[int] = None
+
+
+@dataclass
+class Concept(Entity):
+    """Concept entity."""
+    _type: ClassVar[str] = "concept"
+    _key_attr: ClassVar[str] = "concept-id"
+    concept_id: Optional[str] = None
+    id_label: Optional[str] = None
+    description: Optional[str] = None
+
+
+@dataclass
+class FsFolder(Entity):
+    """Filesystem folder entity."""
+    _type: ClassVar[str] = "fs-folder"
+    _key_attr: ClassVar[str] = "foldername"
+    foldername: Optional[str] = None
+
+
+@dataclass
+class SemanticCue(Entity):
+    """Semantic cue entity."""
+    _type: ClassVar[str] = "semantic-cue"
+    _key_attr: ClassVar[str] = "identifier"
+    identifier: Optional[str] = None
+
+
+# ==================== CONCEPT ENTITIES ====================
+
+@dataclass
+class Actor(Entity):
+    """Actor entity."""
+    _type: ClassVar[str] = "actor"
+    _key_attr: ClassVar[str] = "actor-id"
+    actor_id: Optional[str] = None
+    id_label: Optional[str] = None
+    description: Optional[str] = None
+    justification: Optional[str] = None
+
+
+@dataclass
+class Action(Entity):
+    """Action entity."""
+    _type: ClassVar[str] = "action"
+    _key_attr: ClassVar[str] = "action-id"
+    action_id: Optional[str] = None
+    id_label: Optional[str] = None
+    description: Optional[str] = None
+    justification: Optional[str] = None
+
+
+@dataclass
+class DataEntity(Entity):
+    """Data entity."""
+    _type: ClassVar[str] = "data-entity"
+    _key_attr: ClassVar[str] = "data-entity-id"
+    data_entity_id: Optional[str] = None
+    id_label: Optional[str] = None
+    description: Optional[str] = None
+    justification: Optional[str] = None
+
+
+@dataclass
+class Requirement(Entity):
+    """Requirement entity."""
+    _type: ClassVar[str] = "requirement"
+    _key_attr: ClassVar[str] = "requirement-id"
+    requirement_id: Optional[str] = None
+    id_label: Optional[str] = None
+    description: Optional[str] = None
+
+
+@dataclass
+class Message(Entity):
+    """Message entity."""
+    _type: ClassVar[str] = "message"
+    _key_attr: ClassVar[str] = "message-id"
+    message_id: Optional[str] = None
+    id_label: Optional[str] = None
+    description: Optional[str] = None
+    justification: Optional[str] = None
+
+
+@dataclass
+class ActionAggregate(Entity):
+    """Action aggregate entity."""
+    _type: ClassVar[str] = "action-aggregate"
+    _key_attr: ClassVar[str] = "action-agg-id"
+    action_agg_id: Optional[str] = None
+    id_label: Optional[str] = None
+    description: Optional[str] = None
+
+
+@dataclass
+class MessageAggregate(Entity):
+    """Message aggregate entity."""
+    _type: ClassVar[str] = "message-aggregate"
+    _key_attr: ClassVar[str] = "message-agg-id"
+    message_agg_id: Optional[str] = None
+    id_label: Optional[str] = None
+    description: Optional[str] = None
+
+
+@dataclass
+class Constraint(Entity):
+    """Constraint entity."""
+    _type: ClassVar[str] = "constraint"
+    _key_attr: ClassVar[str] = "constraint-id"
+    constraint_id: Optional[str] = None
+    id_label: Optional[str] = None
+    description: Optional[str] = None
+
+
+@dataclass
+class Category(Entity):
+    """Category entity."""
+    _type: ClassVar[str] = "category"
+    _key_attr: ClassVar[str] = "name"
+    name: Optional[str] = None
+    category_name: Optional[str] = None
+
+
+# ==================== RELATIONS ====================
+
+@dataclass
+class Outlining(Relation):
+    """Outlining relation."""
+    _type: ClassVar[str] = "outlining"
+    _roles: ClassVar[List[str]] = ["section", "subsection"]
+
+
+@dataclass
+class Anchoring(Relation):
+    """Anchoring relation."""
+    _type: ClassVar[str] = "anchoring"
+    _roles: ClassVar[List[str]] = ["anchor", "concept"]
+
+
+@dataclass
+class Membership(Relation):
+    """Membership relation."""
+    _type: ClassVar[str] = "membership"
+    _roles: ClassVar[List[str]] = ["member-of", "member"]
+
+
+@dataclass
+class MembershipSeq(Relation):
+    """Membership sequence relation."""
+    _type: ClassVar[str] = "membership-seq"
+    _roles: ClassVar[List[str]] = ["member-of", "member"]
+
+
+@dataclass
+class Categorization(Relation):
+    """Categorization relation."""
+    _type: ClassVar[str] = "categorization"
+    _roles: ClassVar[List[str]] = ["category", "object"]
+
+
+@dataclass
+class Requiring(Relation):
+    """Requiring relation."""
+    _type: ClassVar[str] = "requiring"
+    _roles: ClassVar[List[str]] = ["required-by", "conceptualized-as"]
+
+
+@dataclass
+class ConstrainedBy(Relation):
+    """Constrained by relation."""
+    _type: ClassVar[str] = "constrained-by"
+    _roles: ClassVar[List[str]] = ["constraint", "object"]
+
+
+@dataclass
+class Messaging(Relation):
+    """Messaging relation."""
+    _type: ClassVar[str] = "messaging"
+    _roles: ClassVar[List[str]] = ["producer", "consumer", "message"]
+    
+    producer: Optional[Any] = None
+    consumer: Optional[Any] = None
+    message: Optional[Any] = None
+
+
+@dataclass
+class MessagePayload(Relation):
+    """Message payload relation."""
+    _type: ClassVar[str] = "message-payload"
+    _roles: ClassVar[List[str]] = ["message", "payload"]
+
+
+@dataclass
+class Filesystem(Relation):
+    """Filesystem relation."""
+    _type: ClassVar[str] = "filesystem"
+    _roles: ClassVar[List[str]] = ["folder", "entry"]
